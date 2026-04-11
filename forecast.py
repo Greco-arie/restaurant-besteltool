@@ -8,7 +8,9 @@ import weather
 WEEKDAGEN = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 
 
-def bereken_baseline(df_history: pd.DataFrame, weekdag: int, n: int = 4) -> float:
+def bereken_baseline(
+    df_history: pd.DataFrame, weekdag: int, n: int = 4, fallback: float = 200.0
+) -> float:
     """Gemiddelde covers van de laatste n vergelijkbare weekdagen."""
     vergelijkbaar = (
         df_history[df_history["weekdag"] == weekdag]
@@ -16,7 +18,8 @@ def bereken_baseline(df_history: pd.DataFrame, weekdag: int, n: int = 4) -> floa
         .head(n)
     )
     if vergelijkbaar.empty:
-        return float(df_history["covers"].mean())
+        overall = df_history["covers"].mean()
+        return float(overall) if not pd.isna(overall) else fallback
     return float(vergelijkbaar["covers"].mean())
 
 
@@ -104,7 +107,8 @@ def bereken_forecast(
 ) -> dict:
     weekdag_morgen = datum_morgen.weekday()
 
-    baseline     = bereken_baseline(df_history, weekdag_morgen)
+    baseline     = bereken_baseline(df_history, weekdag_morgen,
+                                    fallback=float(covers_vandaag) if covers_vandaag > 0 else 200.0)
     trend_factor = bereken_trend(df_history)
     res_factor   = bereken_reserveringscorrectie(reserved_covers, df_history, weekdag_morgen)
     covers_mult, fries_mult, desserts_mult, event_naam, event_type = \
