@@ -1,8 +1,9 @@
 """
-Leermodule — bijhoudt forecast vs. werkelijk resultaat per weekdag.
+Leermodule — bijhoudt forecast vs. werkelijk resultaat per weekdag via Supabase.
 
 Werking:
-- forecast_log.csv groeit elke dag met 1 rij
+- Elke dag wordt een forecast_log rij aangemaakt met predicted_covers
+- Na afloop vult de manager de werkelijke bonnen in → actual_covers
 - bereken_correctiefactor() levert een factor per weekdag (bijv. 1.08 = systeem zat 8% te laag)
 - forecast.py past de baseline aan met die factor
 - Begrensd op 0.75–1.30 zodat het systeem niet doorslaat
@@ -10,13 +11,10 @@ Werking:
 Geen ML, geen black-box. Elke correctie is herleidbaar tot concrete dagdata.
 """
 from __future__ import annotations
-from pathlib import Path
-import pandas as pd
 from datetime import date
+import pandas as pd
 
-LOG_PATH = Path(__file__).parent / "data" / "forecast_log.csv"
-LOG_COLS  = ["datum", "weekdag", "event_naam", "predicted_covers",
-             "actual_covers", "omzet_werkelijk", "notitie"]
+import db
 
 CORRECTIE_MIN  = 0.75
 CORRECTIE_MAX  = 1.30
@@ -24,10 +22,21 @@ MIN_DATAPUNTEN = 3   # minimum rijen per weekdag voordat correctie actief is
 N_RECENTE      = 8   # gebruik de laatste N vergelijkbare weekdagen
 
 
-def _init_log() -> None:
-    LOG_PATH.parent.mkdir(parents=True, exist_ok=True)
-    if not LOG_PATH.exists():
-        pd.DataFrame(columns=LOG_COLS).to_csv(LOG_PATH, index=False)
+def _alle_logs() -> pd.DataFrame:
+    """Laad alle forecast_log rijen uit Supabase als DataFrame."""
+    try:
+        resp = db.get_client().table("forecast_log").select("*").order("datum").execute()
+        if not resp.data:
+            return pd.DataFrame(columns=[
+                "datum", "weekdag", "event_naam", "predicted_covers",
+                "actual_covers", "omzet_werkelijk", "notitie"
+            ])
+        return pd.DataFrame(resp.data)
+    except Exception:
+        return pd.DataFrame(columns=[
+            "datum", "weekdag", "event_naam", "predicted_covers",
+            "actual_covers", "omzet_werkelijk", "notitie"
+        ])
 
 
 def log_forecast(
@@ -37,26 +46,15 @@ def log_forecast(
     notitie:          str = "",
 ) -> None:
     """Sla de forecast op voor morgen. actual_covers en omzet_werkelijk zijn nog leeg."""
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
-
-    datum_str = datum_morgen.isoformat()
-    weekdag   = datum_morgen.weekday()
-
-    # Overschrijf als de datum al bestaat (bijv. bij herberekening)
-    df = df[df["datum"] != datum_str]
-
-    nieuwe_rij = pd.DataFrame([{
-        "datum":            datum_str,
-        "weekdag":          weekdag,
+    db.get_client().table("forecast_log").upsert({
+        "datum":            datum_morgen.isoformat(),
+        "weekdag":          datum_morgen.weekday(),
         "event_naam":       event_naam,
         "predicted_covers": predicted_covers,
         "actual_covers":    None,
         "omzet_werkelijk":  None,
         "notitie":          notitie.strip(),
-    }])
-    df = pd.concat([df, nieuwe_rij], ignore_index=True)
-    df.to_csv(LOG_PATH, index=False)
+    }, on_conflict="datum").execute()
 
 
 def log_werkelijk(
@@ -65,17 +63,15 @@ def log_werkelijk(
     omzet_werkelijk: float,
 ) -> bool:
     """Vul het werkelijke resultaat in voor een eerder gelogde dag. Geeft True als gevonden."""
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
     datum_str = datum.isoformat()
-
-    mask = df["datum"] == datum_str
-    if not mask.any():
+    sb = db.get_client()
+    resp = sb.table("forecast_log").select("id").eq("datum", datum_str).execute()
+    if not resp.data:
         return False
-
-    df.loc[mask, "actual_covers"]   = actual_covers
-    df.loc[mask, "omzet_werkelijk"] = omzet_werkelijk
-    df.to_csv(LOG_PATH, index=False)
+    sb.table("forecast_log").update({
+        "actual_covers":   actual_covers,
+        "omzet_werkelijk": omzet_werkelijk,
+    }).eq("datum", datum_str).execute()
     return True
 
 
@@ -83,18 +79,15 @@ def bereken_correctiefactor(weekdag: int) -> tuple[float, str]:
     """
     Geeft (correctiefactor, uitleg) terug voor de gegeven weekdag.
     Factor = gemiddelde van (actual / predicted) over de laatste N_RECENTE voltooide rijen.
-    Alleen actief als MIN_DATAPUNTEN of meer rijen beschikbaar zijn met werkelijke data.
+    Alleen actief als MIN_DATAPUNTEN of meer rijen beschikbaar zijn.
     """
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
-
-    # Filter: zelfde weekdag, both values aanwezig
+    df = _alle_logs()
     df = df[
         (df["weekdag"] == weekdag) &
-        (df["actual_covers"].notna()) &
-        (df["predicted_covers"].notna()) &
-        (df["predicted_covers"] > 0)
+        df["actual_covers"].notna() &
+        df["predicted_covers"].notna()
     ].copy()
+    df = df[df["predicted_covers"].astype(float) > 0]
     df = df.sort_values("datum", ascending=False).head(N_RECENTE)
 
     if len(df) < MIN_DATAPUNTEN:
@@ -118,29 +111,29 @@ def bereken_correctiefactor(weekdag: int) -> tuple[float, str]:
 
 def laad_accuracy_overzicht() -> pd.DataFrame | None:
     """Geeft een overzicht van forecast-accuraatheid per weekdag voor de UI."""
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
+    df = _alle_logs()
     df = df[
         df["actual_covers"].notna() &
-        df["predicted_covers"].notna() &
-        (df["predicted_covers"] > 0)
+        df["predicted_covers"].notna()
     ].copy()
+    df = df[df["predicted_covers"].astype(float) > 0]
 
     if df.empty:
         return None
 
     df["predicted_covers"] = df["predicted_covers"].astype(float)
     df["actual_covers"]    = df["actual_covers"].astype(float)
+    df["weekdag"]          = df["weekdag"].astype(int)
     df["afwijking_pct"]    = ((df["actual_covers"] - df["predicted_covers"])
                               / df["predicted_covers"] * 100).round(1)
     df["abs_afwijking_pct"]= df["afwijking_pct"].abs()
 
-    WEEKDAGNAMEN = ["Ma","Di","Wo","Do","Vr","Za","Zo"]
+    WEEKDAGNAMEN = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
     overzicht = (
         df.groupby("weekdag")
         .agg(
-            datapunten      = ("datum",           "count"),
-            gemiddelde_fout = ("afwijking_pct",   "mean"),
+            datapunten      = ("datum",            "count"),
+            gemiddelde_fout = ("afwijking_pct",    "mean"),
             mae_pct         = ("abs_afwijking_pct","mean"),
             correctiefactor = ("actual_covers",
                                lambda x: round(max(CORRECTIE_MIN, min(CORRECTIE_MAX,
@@ -149,11 +142,11 @@ def laad_accuracy_overzicht() -> pd.DataFrame | None:
         )
         .reset_index()
     )
-    overzicht["weekdag_naam"]   = overzicht["weekdag"].map(lambda d: WEEKDAGNAMEN[d])
-    overzicht["gemiddelde_fout"]= overzicht["gemiddelde_fout"].round(1)
-    overzicht["mae_pct"]        = overzicht["mae_pct"].round(1)
+    overzicht["weekdag_naam"]    = overzicht["weekdag"].map(lambda d: WEEKDAGNAMEN[d])
+    overzicht["gemiddelde_fout"] = overzicht["gemiddelde_fout"].round(1)
+    overzicht["mae_pct"]         = overzicht["mae_pct"].round(1)
     return overzicht[[
-        "weekdag_naam","datapunten","gemiddelde_fout","mae_pct","correctiefactor"
+        "weekdag_naam", "datapunten", "gemiddelde_fout", "mae_pct", "correctiefactor"
     ]].rename(columns={
         "weekdag_naam":   "Weekdag",
         "datapunten":     "Datapunten",
@@ -166,18 +159,16 @@ def laad_accuracy_overzicht() -> pd.DataFrame | None:
 def laad_notitie_analyse() -> pd.DataFrame | None:
     """
     Geeft een tabel terug van unieke notities met hun gemiddelde afwijking.
-    Alleen rijen met ingevuld werkelijk resultaat én een notitie.
     Minimum 2 datapunten per notitie om ruis te vermijden.
     """
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
+    df = _alle_logs()
     df = df[
         df["actual_covers"].notna() &
         df["predicted_covers"].notna() &
-        (df["predicted_covers"] > 0) &
         df["notitie"].notna() &
-        (df["notitie"].str.strip() != "")
+        (df["notitie"].astype(str).str.strip() != "")
     ].copy()
+    df = df[df["predicted_covers"].astype(float) > 0]
 
     if df.empty:
         return None
@@ -190,14 +181,13 @@ def laad_notitie_analyse() -> pd.DataFrame | None:
     analyse = (
         df.groupby("notitie")
         .agg(
-            keren          = ("datum",        "count"),
-            gem_afwijking  = ("afwijking_pct","mean"),
-            gem_werkelijk  = ("actual_covers","mean"),
+            keren         = ("datum",        "count"),
+            gem_afwijking = ("afwijking_pct","mean"),
+            gem_werkelijk = ("actual_covers","mean"),
         )
         .reset_index()
         .sort_values("keren", ascending=False)
     )
-    # Alleen notities met 2+ datapunten tonen
     analyse = analyse[analyse["keren"] >= 2].copy()
     if analyse.empty:
         return None
@@ -214,10 +204,11 @@ def laad_notitie_analyse() -> pd.DataFrame | None:
 
 def heeft_open_werkelijk(datum: date) -> bool:
     """True als er een forecast-rij is voor deze datum zonder werkelijk resultaat."""
-    _init_log()
-    df = pd.read_csv(LOG_PATH)
-    datum_str = datum.isoformat()
-    rij = df[df["datum"] == datum_str]
-    if rij.empty:
+    try:
+        datum_str = datum.isoformat()
+        resp = db.get_client().table("forecast_log").select("actual_covers").eq("datum", datum_str).execute()
+        if not resp.data:
+            return False
+        return resp.data[0]["actual_covers"] is None
+    except Exception:
         return False
-    return bool(rij["actual_covers"].isna().any())
