@@ -674,25 +674,21 @@ def page_leerrapport() -> None:
 
 def _toon_log_tabel() -> None:
     st.subheader("Forecast log")
-    pad = learning.LOG_PATH
-    if not pad.exists():
-        st.info("Nog geen forecasts gelogd.")
-        return
-
-    df = pd.read_csv(pad)
+    df = learning._alle_logs()
     if df.empty:
         st.info("Nog geen forecasts gelogd.")
         return
 
-    WEEKDAGNAMEN = ["Ma","Di","Wo","Do","Vr","Za","Zo"]
-    df["weekdag_naam"] = df["weekdag"].map(lambda d: WEEKDAGNAMEN[int(d)] if pd.notna(d) else "")
-    # Datum weergeven als DD/MM/YYYY
+    WEEKDAGNAMEN = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+    df["weekdag_naam"] = df["weekdag"].map(
+        lambda d: WEEKDAGNAMEN[int(d)] if pd.notna(d) else ""
+    )
     df["datum"] = pd.to_datetime(df["datum"]).dt.strftime("%d/%m/%Y")
     df["afwijking"] = (
         df["actual_covers"].astype(float) - df["predicted_covers"].astype(float)
     ).where(df["actual_covers"].notna())
 
-    kolommen = ["datum","weekdag_naam","event_naam","predicted_covers","actual_covers","afwijking"]
+    kolommen = ["datum", "weekdag_naam", "event_naam", "predicted_covers", "actual_covers", "afwijking"]
     if "notitie" in df.columns:
         kolommen.append("notitie")
 
