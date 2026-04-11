@@ -15,22 +15,323 @@ import db
 
 st.set_page_config(
     page_title="Besteltool",
-    page_icon="🍟",
+    page_icon=None,
     layout="wide",
     initial_sidebar_state="expanded",
 )
 
-WEEKDAGEN      = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
-CONFIDENCE_ICON = {"hoog": "🟢", "gemiddeld": "🟡", "laag": "🔴"}
-PAGINAS = [
-    "📋  Dag afsluiten",
-    "📊  Forecast morgen",
-    "✅  Bestelreview",
-    "📤  Export",
-    "📦  Inventaris",
-    "📈  Leerrapport",
-]
-PAGINAS_ADMIN = PAGINAS + ["⚙️  Admin"]
+# ── Pagina-namen (geen emoji's) ────────────────────────────────────────────
+PAGE_CLOSING     = "Dag afsluiten"
+PAGE_FORECAST    = "Forecast"
+PAGE_REVIEW      = "Bestelreview"
+PAGE_EXPORT      = "Export"
+PAGE_INVENTARIS  = "Inventaris"
+PAGE_LEERRAPPORT = "Leerrapport"
+PAGE_ADMIN       = "Beheer"
+
+WEEKDAGEN = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
+CONFIDENCE_LABEL = {"hoog": "Hoog", "gemiddeld": "Gemiddeld", "laag": "Laag"}
+
+PAGINAS       = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT, PAGE_INVENTARIS, PAGE_LEERRAPPORT]
+PAGINAS_ADMIN = PAGINAS + [PAGE_ADMIN]
+
+
+# ── Design system ──────────────────────────────────────────────────────────
+def _css() -> None:
+    st.markdown("""
+    <style>
+    /* ── Base ──────────────────────────────────────────────────────── */
+    html, body, [data-testid="stApp"] {
+        background-color: #f5f6f8 !important;
+        font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "Inter",
+                     Roboto, "Helvetica Neue", Arial, sans-serif;
+    }
+    section.main > div.block-container {
+        padding-top: 2rem !important;
+        padding-bottom: 3rem !important;
+        max-width: 1160px;
+    }
+
+    /* ── Sidebar ────────────────────────────────────────────────────── */
+    [data-testid="stSidebar"] {
+        background-color: #ffffff !important;
+        border-right: 1px solid #e5e7eb !important;
+    }
+    [data-testid="stSidebar"] section {
+        padding-top: 1.5rem !important;
+    }
+    [data-testid="stSidebar"] .stRadio > label {
+        display: none !important;
+    }
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label {
+        font-size: 0.8125rem !important;
+        color: #374151 !important;
+        padding: 6px 10px !important;
+        border-radius: 5px !important;
+        transition: background 0.12s;
+    }
+    [data-testid="stSidebar"] .stRadio div[role="radiogroup"] label:hover {
+        background: #f3f4f6;
+    }
+
+    /* ── Typography ─────────────────────────────────────────────────── */
+    h1 {
+        font-size: 1.375rem !important;
+        font-weight: 600 !important;
+        letter-spacing: -0.02em !important;
+        color: #111827 !important;
+    }
+    h2 { font-size: 1.0625rem !important; font-weight: 600 !important; color: #111827 !important; }
+    h3 { font-size: 0.9375rem !important; font-weight: 600 !important; color: #1f2937 !important; }
+    p, li, div { font-size: 0.875rem; }
+
+    /* ── Page header helper ──────────────────────────────────────────── */
+    .ph-wrap {
+        margin-bottom: 1.75rem;
+        padding-bottom: 1rem;
+        border-bottom: 1px solid #f3f4f6;
+    }
+    .ph-title {
+        font-size: 1.375rem;
+        font-weight: 600;
+        letter-spacing: -0.02em;
+        color: #111827;
+        margin: 0;
+        line-height: 1.3;
+    }
+    .ph-sub {
+        font-size: 0.8125rem;
+        color: #6b7280;
+        margin: 4px 0 0 0;
+        line-height: 1.4;
+    }
+
+    /* ── Metric cards ────────────────────────────────────────────────── */
+    [data-testid="stMetric"] {
+        background: #ffffff !important;
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px !important;
+        padding: 1rem 1.25rem !important;
+    }
+    [data-testid="metric-container"] label,
+    [data-testid="stMetricLabel"] {
+        font-size: 0.6875rem !important;
+        font-weight: 500 !important;
+        letter-spacing: 0.06em !important;
+        text-transform: uppercase !important;
+        color: #9ca3af !important;
+    }
+    [data-testid="stMetricValue"] {
+        font-size: 1.5rem !important;
+        font-weight: 600 !important;
+        color: #111827 !important;
+        letter-spacing: -0.01em !important;
+    }
+    [data-testid="stMetricDelta"] {
+        font-size: 0.75rem !important;
+    }
+
+    /* ── Buttons ─────────────────────────────────────────────────────── */
+    button[kind="primary"], .stButton > button[kind="primary"] {
+        background-color: #111827 !important;
+        color: #ffffff !important;
+        border: none !important;
+        border-radius: 6px !important;
+        font-weight: 500 !important;
+        font-size: 0.875rem !important;
+        letter-spacing: 0.005em !important;
+    }
+    button[kind="primary"]:hover {
+        background-color: #1f2937 !important;
+    }
+    .stButton > button[kind="secondary"] {
+        background-color: #ffffff !important;
+        color: #374151 !important;
+        border: 1px solid #d1d5db !important;
+        border-radius: 6px !important;
+        font-weight: 400 !important;
+        font-size: 0.875rem !important;
+    }
+    .stButton > button[kind="secondary"]:hover {
+        background-color: #f9fafb !important;
+    }
+    [data-testid="stLinkButton"] a {
+        background-color: #111827 !important;
+        color: #ffffff !important;
+        border-radius: 6px !important;
+        font-size: 0.875rem !important;
+        font-weight: 500 !important;
+    }
+
+    /* ── Inputs ──────────────────────────────────────────────────────── */
+    [data-testid="stTextInput"] input,
+    [data-testid="stNumberInput"] input,
+    [data-testid="stTextArea"] textarea {
+        border: 1px solid #d1d5db !important;
+        border-radius: 6px !important;
+        font-size: 0.875rem !important;
+        background: #ffffff !important;
+        color: #111827 !important;
+    }
+    [data-testid="stTextInput"] input:focus,
+    [data-testid="stNumberInput"] input:focus {
+        border-color: #374151 !important;
+        box-shadow: 0 0 0 2px rgba(55,65,81,0.12) !important;
+    }
+    [data-testid="stSelectbox"] > div {
+        border-radius: 6px !important;
+        font-size: 0.875rem !important;
+    }
+
+    /* ── Forms ────────────────────────────────────────────────────────── */
+    [data-testid="stForm"] {
+        background: #ffffff;
+        border: 1px solid #e5e7eb !important;
+        border-radius: 10px !important;
+        padding: 1.5rem !important;
+    }
+
+    /* ── Alerts ───────────────────────────────────────────────────────── */
+    [data-testid="stAlert"] {
+        border-radius: 6px !important;
+        font-size: 0.8125rem !important;
+    }
+
+    /* ── Expander ─────────────────────────────────────────────────────── */
+    [data-testid="stExpander"] {
+        background: #ffffff !important;
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px !important;
+    }
+    [data-testid="stExpander"] summary {
+        font-weight: 500 !important;
+        font-size: 0.875rem !important;
+        color: #111827 !important;
+    }
+
+    /* ── Tabs ─────────────────────────────────────────────────────────── */
+    .stTabs [data-baseweb="tab-list"] {
+        background: #f3f4f6 !important;
+        padding: 3px !important;
+        border-radius: 8px !important;
+        gap: 2px !important;
+    }
+    .stTabs [data-baseweb="tab"] {
+        border-radius: 6px !important;
+        font-size: 0.8125rem !important;
+        font-weight: 500 !important;
+        color: #6b7280 !important;
+        padding: 6px 14px !important;
+    }
+    .stTabs [aria-selected="true"] {
+        background: #ffffff !important;
+        color: #111827 !important;
+    }
+
+    /* ── Divider ──────────────────────────────────────────────────────── */
+    hr { border-color: #f3f4f6 !important; margin: 1.5rem 0 !important; }
+
+    /* ── Dataframe / table ────────────────────────────────────────────── */
+    [data-testid="stDataFrame"] {
+        border: 1px solid #e5e7eb !important;
+        border-radius: 8px !important;
+        overflow: hidden !important;
+    }
+
+    /* ── Date input ───────────────────────────────────────────────────── */
+    [data-testid="stDateInput"] input {
+        border: 1px solid #d1d5db !important;
+        border-radius: 6px !important;
+        font-size: 0.875rem !important;
+    }
+
+    /* ── Section card wrapper ────────────────────────────────────────── */
+    .section-card {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 10px;
+        padding: 1.5rem;
+        margin-bottom: 1rem;
+    }
+    .section-label {
+        font-size: 0.6875rem;
+        font-weight: 600;
+        letter-spacing: 0.07em;
+        text-transform: uppercase;
+        color: #9ca3af;
+        margin-bottom: 0.75rem;
+    }
+
+    /* ── Login card ───────────────────────────────────────────────────── */
+    .login-wrap {
+        background: #ffffff;
+        border: 1px solid #e5e7eb;
+        border-radius: 12px;
+        padding: 2.5rem 2.5rem 2rem;
+        margin-top: 2rem;
+    }
+    .login-product {
+        font-size: 0.75rem;
+        font-weight: 600;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+        color: #9ca3af;
+        margin-bottom: 0.5rem;
+    }
+    .login-title {
+        font-size: 1.375rem;
+        font-weight: 700;
+        color: #111827;
+        letter-spacing: -0.02em;
+        margin-bottom: 0.25rem;
+    }
+    .login-sub {
+        font-size: 0.8125rem;
+        color: #6b7280;
+        margin-bottom: 1.75rem;
+    }
+
+    /* ── Overlay reset button ─────────────────────────────────────────── */
+    .stButton > button[data-testid*="reset"] {
+        background: #ffffff !important;
+        border: 1px solid #d1d5db !important;
+        color: #374151 !important;
+        font-size: 0.8125rem !important;
+    }
+
+    /* ── Status tag ───────────────────────────────────────────────────── */
+    .tag-low {
+        display: inline-block;
+        padding: 1px 7px;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        border-radius: 4px;
+        background: #fef3c7;
+        color: #92400e;
+        letter-spacing: 0.02em;
+    }
+    .tag-ok {
+        display: inline-block;
+        padding: 1px 7px;
+        font-size: 0.6875rem;
+        font-weight: 600;
+        border-radius: 4px;
+        background: #f0fdf4;
+        color: #166534;
+    }
+    .conf-hoog { color: #16a34a; font-weight: 600; }
+    .conf-gemiddeld { color: #d97706; font-weight: 600; }
+    .conf-laag { color: #dc2626; font-weight: 600; }
+    </style>
+    """, unsafe_allow_html=True)
+
+
+def _page_header(title: str, subtitle: str = "") -> None:
+    sub = f'<p class="ph-sub">{subtitle}</p>' if subtitle else ""
+    st.markdown(
+        f'<div class="ph-wrap"><p class="ph-title">{title}</p>{sub}</div>',
+        unsafe_allow_html=True,
+    )
 
 
 # ── Gecachte data ──────────────────────────────────────────────────────────
@@ -67,7 +368,7 @@ def init_state() -> None:
         "forecast_result": None,
         "advies_df":       None,
         "approved_orders": None,
-        "pagina":          "📋  Dag afsluiten",
+        "pagina":          PAGE_CLOSING,
     }.items():
         if key not in st.session_state:
             st.session_state[key] = val
@@ -76,14 +377,14 @@ def init_state() -> None:
 # ── Overlay voor voltooide stappen ────────────────────────────────────────
 def _toon_voltooid_overlay(page_key: str) -> None:
     if st.button(
-        "🔄  Opnieuw beginnen — reset alle stappen",
+        "Opnieuw beginnen — reset alle stappen",
         type="secondary",
         use_container_width=True,
         key=f"reset_{page_key}",
     ):
         for k in ["closing_data", "forecast_result", "advies_df", "approved_orders"]:
             st.session_state[k] = None
-        st.session_state.pagina = "📋  Dag afsluiten"
+        st.session_state.pagina = PAGE_CLOSING
         st.rerun()
 
     st.markdown("""
@@ -97,7 +398,7 @@ def _toon_voltooid_overlay(page_key: str) -> None:
         content: "";
         position: fixed;
         inset: 0;
-        background: rgba(0, 0, 0, 0.55);
+        background: rgba(0, 0, 0, 0.45);
         z-index: 999;
         pointer-events: none;
     }
@@ -112,12 +413,15 @@ def _toon_voltooid_overlay(page_key: str) -> None:
 
 # ── Inlogscherm ────────────────────────────────────────────────────────────
 def page_login() -> None:
-    col_l, col_m, col_r = st.columns([1, 1.4, 1])
+    col_l, col_m, col_r = st.columns([1, 1.2, 1])
     with col_m:
-        st.markdown("<br><br>", unsafe_allow_html=True)
-        st.markdown("## 🍟 Besteltool")
-        st.caption("Log in om verder te gaan.")
-        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("""
+        <div class="login-wrap">
+            <p class="login-product">Besteltool</p>
+            <p class="login-title">Welkom terug</p>
+            <p class="login-sub">Log in om verder te gaan.</p>
+        </div>
+        """, unsafe_allow_html=True)
 
         with st.form("login_form"):
             gebruiker  = st.text_input("Gebruikersnaam")
@@ -147,8 +451,10 @@ def page_closing() -> None:
     if st.session_state.forecast_result is not None:
         _toon_voltooid_overlay("sluiting")
 
-    st.title("📋  Dag afsluiten")
-    st.caption("Vul de dagcijfers in. Het systeem berekent forecast en besteladvies.")
+    _page_header(
+        "Dag afsluiten",
+        "Vul de dagcijfers in. Het systeem berekent de forecast en het besteladvies.",
+    )
 
     df_producten  = get_products()
     df_stock_base = get_stock_count(tenant_id)
@@ -161,7 +467,7 @@ def page_closing() -> None:
     col1, col2 = st.columns(2)
 
     with col1:
-        st.subheader("Vandaag")
+        st.markdown('<p class="section-label">Vandaag</p>', unsafe_allow_html=True)
         datum_vandaag = st.date_input("Datum", value=datum_vandaag, format="DD/MM/YYYY")
         datum_morgen  = datum_vandaag + timedelta(days=1)
         covers        = st.number_input("Bonnen vandaag", min_value=0, step=1, value=0,
@@ -169,7 +475,7 @@ def page_closing() -> None:
         omzet         = st.number_input("Omzet vandaag (€)", min_value=0.0, step=50.0, value=0.0)
 
     with col2:
-        st.subheader("Morgen")
+        st.markdown('<p class="section-label">Morgen</p>', unsafe_allow_html=True)
         st.info(
             f"Forecast voor: **{WEEKDAGEN[datum_morgen.weekday()].capitalize()} "
             f"{datum_morgen.strftime('%d %B %Y')}**"
@@ -197,8 +503,8 @@ def page_closing() -> None:
 
         if platters_25 or platters_50:
             st.info(
-                f"Party platters → extra minisnacks: frikandellen, nuggets, bitterballen "
-                f"(+{platters_25*25 + platters_50*50} stuks totaal)"
+                f"Party platters: {platters_25}× 25st + {platters_50}× 50st "
+                f"— extra minisnack-vraag verwerkt (+{platters_25*25 + platters_50*50} stuks)"
             )
 
         bijzonderheden = st.text_area("Bijzonderheden", height=68, value="",
@@ -216,7 +522,7 @@ def page_closing() -> None:
             )
 
     st.divider()
-    st.subheader("Closing stock — 30 kritieke SKU's")
+    st.markdown('<p class="section-label">Sluitstock — 30 kritieke artikelen</p>', unsafe_allow_html=True)
     st.caption("Controleer en pas de voorraad aan. Dit wordt opgeslagen als live voorraad.")
 
     stock_map    = dict(zip(df_stock_base["product_id"], df_stock_base["hoeveelheid"]))
@@ -241,10 +547,10 @@ def page_closing() -> None:
     gisteren = datum_vandaag - timedelta(days=1)
     if learning.heeft_open_werkelijk(tenant_id, gisteren):
         st.divider()
-        st.subheader("Werkelijk resultaat van gisteren")
+        st.markdown('<p class="section-label">Werkelijk resultaat van gisteren</p>', unsafe_allow_html=True)
         st.caption(
-            f"Je hebt voor **{WEEKDAGEN[gisteren.weekday()]} "
-            f"{gisteren.strftime('%d %B')}** nog geen werkelijk resultaat ingevuld. "
+            f"Voor **{WEEKDAGEN[gisteren.weekday()]} "
+            f"{gisteren.strftime('%d %B')}** is nog geen werkelijk resultaat ingevuld. "
             "Dit helpt het systeem beter te voorspellen."
         )
         col_w1, col_w2, col_w3 = st.columns([2, 2, 1])
@@ -267,29 +573,28 @@ def page_closing() -> None:
                         tenant_id, gisteren, int(werkelijk_covers), float(werkelijk_omzet)
                     )
                     if opgeslagen:
-                        st.success("Resultaat opgeslagen. Forecast verbetert mee.")
+                        st.success("Resultaat opgeslagen.")
                         st.cache_data.clear()
                         st.rerun()
 
     # ── Weerpreview ───────────────────────────────────────────────────────
     st.divider()
-    st.subheader("Weer morgen")
+    st.markdown('<p class="section-label">Weer morgen</p>', unsafe_allow_html=True)
     weer_preview = wt.get_weer_morgen(datum_morgen)
     if weer_preview["beschikbaar"]:
-        icon = weer_preview["icon"]
         w_col1, w_col2, w_col3 = st.columns(3)
-        w_col1.metric(f"{icon} Temperatuur",  f"{weer_preview['temp_max']:.0f}°C")
-        w_col2.metric("Regenrisico",           f"{weer_preview['precip_prob']}%")
-        w_col3.metric("Terras factor",         f"×{weer_preview['terras_factor']:.2f}")
+        w_col1.metric("Temperatuur",  f"{weer_preview['temp_max']:.0f}°C")
+        w_col2.metric("Regenrisico",  f"{weer_preview['precip_prob']}%")
+        w_col3.metric("Terras factor", f"×{weer_preview['terras_factor']:.2f}")
         if weer_preview["terras_factor"] > 1.0:
-            st.success(f"{icon} {weer_preview['label']}")
+            st.success(weer_preview["label"])
         else:
-            st.info(f"{icon} {weer_preview['label']}")
+            st.info(weer_preview["label"])
     else:
         st.warning("Weerdata niet beschikbaar — geen terras-correctie toegepast.")
 
     st.divider()
-    if st.button("Bereken forecast en besteladvies →", type="primary", use_container_width=True):
+    if st.button("Bereken forecast en besteladvies", type="primary", use_container_width=True):
         if covers == 0:
             st.error("Vul het aantal bonnen van vandaag in.")
             return
@@ -323,18 +628,11 @@ def page_closing() -> None:
             platters_50     = int(platters_50),
         )
 
-        # ── Data opslaan ──────────────────────────────────────────────────
         dl.sla_dag_op(tenant_id, datum_vandaag, int(covers), float(omzet),
                       int(reserved_covers), bijzonderheden)
         dl.sla_stock_op(tenant_id, datum_vandaag, df_stock_nu)
-
-        # Sla live voorraad op vanuit manager-telling
         inv.sla_sluitstock_op(tenant_id, df_stock_nu, datum_vandaag, created_by=user_naam)
-
-        # Log theoretisch verbruik voor leermodel (overschrijft live voorraad NIET)
         inv.log_theoretisch_verbruik(tenant_id, datum_vandaag, int(covers), df_producten)
-
-        # Forecast loggen
         learning.log_forecast(tenant_id, datum_morgen, result["forecast_covers"],
                               result["event_naam"], bijzonderheden)
 
@@ -344,7 +642,7 @@ def page_closing() -> None:
         st.session_state.forecast_result = result
         st.session_state.advies_df       = advies_df
         st.session_state.approved_orders = None
-        st.session_state.pagina          = "📊  Forecast morgen"
+        st.session_state.pagina          = PAGE_FORECAST
         st.rerun()
 
 
@@ -352,12 +650,13 @@ def page_closing() -> None:
 def page_forecast() -> None:
     if st.session_state.approved_orders is not None:
         _toon_voltooid_overlay("forecast")
-    st.title("📊  Forecast morgen")
+
+    _page_header("Forecast morgen")
 
     if st.session_state.forecast_result is None:
         st.warning("Sluit eerst de dag af.")
-        if st.button("← Naar dag afsluiten"):
-            st.session_state.pagina = "📋  Dag afsluiten"
+        if st.button("Naar dag afsluiten"):
+            st.session_state.pagina = PAGE_CLOSING
             st.rerun()
         return
 
@@ -365,46 +664,45 @@ def page_forecast() -> None:
     datum_str  = WEEKDAGEN[r["weekdag_morgen"]].capitalize() + r["datum_morgen"].strftime(" %d %B %Y")
     confidence = r["confidence"]
 
-    st.subheader(f"Forecast voor {datum_str}")
+    st.caption(f"Forecast voor {datum_str}")
+    st.divider()
 
     col1, col2, col3, col4 = st.columns(4)
-    col1.metric("Verwachte bonnen",           r["forecast_covers"],
+    col1.metric("Verwachte bonnen",       r["forecast_covers"],
                 delta=f"{r['forecast_covers'] - r['baseline']:+.0f} vs baseline")
-    col2.metric("Verwachte omzet",            f"€ {r['forecast_omzet']:,.0f}")
-    col3.metric("Betrouwbaarheid",
-                f"{CONFIDENCE_ICON[confidence]} {confidence.capitalize()}")
-    col4.metric("Baseline (zelfde weekdag)",  f"{r['baseline']:.0f}")
+    col2.metric("Verwachte omzet",        f"€ {r['forecast_omzet']:,.0f}")
+    col3.metric("Betrouwbaarheid",        CONFIDENCE_LABEL[confidence])
+    col4.metric("Baseline (zelfde dag)",  f"{r['baseline']:.0f}")
 
     if r["fries_mult"] > 1.0 or r["desserts_mult"] > 1.0:
         col_f, col_d = st.columns(2)
         if r["fries_mult"] > 1.0:
-            col_f.metric("Friet ratio-multiplier", f"×{r['fries_mult']:.2f}")
+            col_f.metric("Friet multiplier",   f"×{r['fries_mult']:.2f}")
         if r["desserts_mult"] > 1.0:
-            col_d.metric("Dessert ratio-multiplier", f"×{r['desserts_mult']:.2f}")
+            col_d.metric("Dessert multiplier", f"×{r['desserts_mult']:.2f}")
 
     if r["platters_25"] or r["platters_50"]:
         st.info(
-            f"Partycatering morgen: **{r['platters_25']}× platter 25st** + "
-            f"**{r['platters_50']}× platter 50st** → extra minisnack-vraag verwerkt"
+            f"Partycatering: {r['platters_25']}× platter 25st + "
+            f"{r['platters_50']}× platter 50st — extra minisnack-vraag verwerkt."
         )
 
     weer = r.get("weer", {})
     if weer.get("beschikbaar"):
         tf     = weer["terras_factor"]
         df_w   = weer["drinks_factor"]
-        kleur  = "success" if tf > 1.0 else "info"
         bericht = (
-            f"{weer['icon']} **{weer['omschrijving']}** — "
+            f"**{weer['omschrijving']}** — "
             f"{weer['temp_max']:.0f}°C, {weer['precip_prob']}% regenrisico  \n"
             f"Terras-effect: covers ×{tf:.2f} | dranken ×{df_w:.2f}"
         )
-        if kleur == "success":
+        if tf > 1.0:
             st.success(bericht)
         else:
             st.info(bericht)
 
     st.divider()
-    st.subheader("Hoe is dit berekend?")
+    st.markdown('<p class="section-label">Berekening</p>', unsafe_allow_html=True)
     for driver in r["drivers"]:
         st.write(f"• {driver}")
 
@@ -417,19 +715,19 @@ def page_forecast() -> None:
     if cf != 1.0:
         richting = "omhoog" if cf > 1.0 else "omlaag"
         st.info(
-            f"Lerende correctie actief: systeem past forecast {richting} "
+            f"Lerende correctie actief: forecast wordt {richting} bijgesteld "
             f"(factor {cf:.3f}) op basis van eerdere dagresultaten."
         )
 
     st.divider()
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("← Aanpassen", use_container_width=True):
-            st.session_state.pagina = "📋  Dag afsluiten"
+        if st.button("Aanpassen", use_container_width=True):
+            st.session_state.pagina = PAGE_CLOSING
             st.rerun()
     with col_b:
-        if st.button("Naar bestelreview →", type="primary", use_container_width=True):
-            st.session_state.pagina = "✅  Bestelreview"
+        if st.button("Naar bestelreview", type="primary", use_container_width=True):
+            st.session_state.pagina = PAGE_REVIEW
             st.rerun()
 
 
@@ -437,12 +735,13 @@ def page_forecast() -> None:
 def page_review() -> None:
     if st.session_state.approved_orders is not None:
         _toon_voltooid_overlay("review")
-    st.title("✅  Bestelreview")
+
+    _page_header("Bestelreview")
 
     if st.session_state.advies_df is None:
         st.warning("Bereken eerst de forecast.")
-        if st.button("← Naar dag afsluiten"):
-            st.session_state.pagina = "📋  Dag afsluiten"
+        if st.button("Naar dag afsluiten"):
+            st.session_state.pagina = PAGE_CLOSING
             st.rerun()
         return
 
@@ -461,16 +760,16 @@ def page_review() -> None:
     st.divider()
 
     weergave = advies_df.rename(columns={
-        "id":             "SKU",
-        "naam":           "Artikel",
-        "leverancier":    "Leverancier",
-        "eenheid":        "Eenheid",
-        "voorraad":       "Voorraad",
-        "verwachte_vraag":"Verwachte vraag",
-        "buffer_qty":     "Buffer",
-        "platter_extra":  "Party extra",
-        "besteladvies":   "Bestellen",
-        "reden":          "Reden",
+        "id":              "SKU",
+        "naam":            "Artikel",
+        "leverancier":     "Leverancier",
+        "eenheid":         "Eenheid",
+        "voorraad":        "Voorraad",
+        "verwachte_vraag": "Verwachte vraag",
+        "buffer_qty":      "Buffer",
+        "platter_extra":   "Party extra",
+        "besteladvies":    "Bestellen",
+        "reden":           "Reden",
     })
 
     edited = st.data_editor(
@@ -494,26 +793,26 @@ def page_review() -> None:
     st.divider()
     col_a, col_b = st.columns(2)
     with col_a:
-        if st.button("← Terug naar forecast", use_container_width=True):
-            st.session_state.pagina = "📊  Forecast morgen"
+        if st.button("Terug naar forecast", use_container_width=True):
+            st.session_state.pagina = PAGE_FORECAST
             st.rerun()
     with col_b:
-        if st.button("Goedkeuren en exporteren →", type="primary", use_container_width=True):
+        if st.button("Goedkeuren en exporteren", type="primary", use_container_width=True):
             approved = advies_df.copy()
             approved["besteladvies"] = edited["Bestellen"].values
             st.session_state.approved_orders = approved
-            st.session_state.pagina = "📤  Export"
+            st.session_state.pagina = PAGE_EXPORT
             st.rerun()
 
 
 # ── Scherm 4 — Export ─────────────────────────────────────────────────────
 def page_export() -> None:
-    st.title("📤  Export — Bestellijst per leverancier")
+    _page_header("Export", "Bestellijst per leverancier")
 
     if st.session_state.approved_orders is None:
         st.warning("Keur eerst het besteladvies goed.")
-        if st.button("← Naar bestelreview"):
-            st.session_state.pagina = "✅  Bestelreview"
+        if st.button("Naar bestelreview"):
+            st.session_state.pagina = PAGE_REVIEW
             st.rerun()
         return
 
@@ -542,10 +841,10 @@ def page_export() -> None:
 
     for lev, df_lev in per_lev.items():
         df_display = df_lev.rename(columns={
-            "id":          "SKU",
-            "naam":        "Artikel",
-            "eenheid":     "Eenheid",
-            "besteladvies":"Bestellen",
+            "id":           "SKU",
+            "naam":         "Artikel",
+            "eenheid":      "Eenheid",
+            "besteladvies": "Bestellen",
         })
         with st.expander(f"**{lev}** — {len(df_lev)} artikel(en)", expanded=True):
             st.dataframe(df_display, hide_index=True, use_container_width=True)
@@ -556,7 +855,7 @@ def page_export() -> None:
             col_mail, col_csv = st.columns([3, 2])
             with col_mail:
                 mailto = dl.genereer_mailto(lev, df_lev, datum)
-                label  = f"📧  Mail naar {lev}" + (f" ({email})" if email else "")
+                label  = f"Mail naar {lev}" + (f" ({email})" if email else "")
                 st.link_button(label, mailto, use_container_width=True, type="primary")
             with col_csv:
                 csv = df_lev.to_csv(index=False).encode("utf-8")
@@ -586,7 +885,7 @@ def page_export() -> None:
     if st.button("Nieuwe dag starten", use_container_width=True):
         for key in ["closing_data", "forecast_result", "advies_df", "approved_orders"]:
             st.session_state[key] = None
-        st.session_state.pagina = "📋  Dag afsluiten"
+        st.session_state.pagina = PAGE_CLOSING
         st.rerun()
 
 
@@ -595,17 +894,17 @@ def page_inventaris() -> None:
     tenant_id = st.session_state.tenant_id
     user_naam = st.session_state.user_naam
 
-    st.title("📦  Inventaris")
-    st.caption(
+    _page_header(
+        "Inventaris",
         "Bekijk de huidige voorraad en corrigeer waar nodig. "
-        "Elke correctie wordt opgeslagen en gebruikt om het systeem te verbeteren."
+        "Elke correctie wordt opgeslagen en gebruikt om het systeem te verbeteren.",
     )
 
     df_producten = get_products()
     df_inv       = inv.laad_huidige_voorraad(tenant_id)
 
     # ── Overzicht huidige voorraad ────────────────────────────────────────
-    st.subheader("Huidige voorraad")
+    st.markdown('<p class="section-label">Huidige voorraad</p>', unsafe_allow_html=True)
 
     if df_inv.empty:
         st.info("Nog geen voorraad geregistreerd. Sluit eerst een dag af.")
@@ -620,25 +919,25 @@ def page_inventaris() -> None:
         df_view["Eenheid"]    = df_view["sku_id"].map(sku_eenheid_map).fillna("")
         df_view["Leverancier"]= df_view["sku_id"].map(sku_lev_map).fillna("")
         df_view["Min."]       = df_view["sku_id"].map(min_stock_map).fillna(0)
-        df_view["⚠️"]         = df_view.apply(
-            lambda r: "⚠️  Laag" if float(r["current_stock"]) < float(r["Min."]) else "", axis=1
+        df_view["Status"]     = df_view.apply(
+            lambda r: "Laag" if float(r["current_stock"]) < float(r["Min."]) else "OK", axis=1
         )
         df_view["Bijgewerkt"] = pd.to_datetime(df_view["last_updated_at"]).dt.strftime("%d/%m %H:%M")
 
         st.dataframe(
-            df_view[["Artikel", "Leverancier", "Eenheid", "current_stock", "Min.", "⚠️", "Bijgewerkt"]]
+            df_view[["Artikel", "Leverancier", "Eenheid", "current_stock", "Min.", "Status", "Bijgewerkt"]]
             .rename(columns={"current_stock": "Voorraad"}),
             hide_index=True,
             use_container_width=True,
         )
 
-        laag = int((df_view["⚠️"] != "").sum())
+        laag = int((df_view["Status"] == "Laag").sum())
         if laag:
             st.warning(f"**{laag} artikel(en) onder minimumvoorraad** — controleer de bestelreview.")
 
     # ── Handmatige correctie ──────────────────────────────────────────────
     st.divider()
-    st.subheader("Voorraad corrigeren")
+    st.markdown('<p class="section-label">Voorraad corrigeren</p>', unsafe_allow_html=True)
 
     product_opties = dict(zip(df_producten["naam"], df_producten["id"]))
 
@@ -673,11 +972,11 @@ def page_inventaris() -> None:
 
         delta = nieuwe_stock - huidig
         st.caption(
-            f"Huidige voorraad: **{huidig}** → Nieuwe voorraad: **{nieuwe_stock}** "
-            f"(Δ {delta:+.2f})"
+            f"Huidig: **{huidig}** → Nieuw: **{nieuwe_stock}** "
+            f"(delta {delta:+.2f})"
         )
 
-        opslaan = st.form_submit_button("💾  Opslaan correctie", type="primary", use_container_width=True)
+        opslaan = st.form_submit_button("Correctie opslaan", type="primary", use_container_width=True)
 
     if opslaan:
         inv.sla_handmatige_correctie_op(
@@ -694,7 +993,7 @@ def page_inventaris() -> None:
 
     # ── Recente correcties ────────────────────────────────────────────────
     st.divider()
-    st.subheader("Recente mutaties")
+    st.markdown('<p class="section-label">Recente mutaties</p>', unsafe_allow_html=True)
 
     df_correcties = inv.laad_recente_correcties(tenant_id)
     if df_correcties.empty:
@@ -714,7 +1013,7 @@ def page_inventaris() -> None:
             ]].rename(columns={
                 "previous_stock":  "Was",
                 "new_stock":       "Nieuw",
-                "quantity_delta":  "Δ",
+                "quantity_delta":  "Delta",
                 "adjustment_type": "Type",
                 "reason":          "Reden",
                 "note":            "Notitie",
@@ -726,7 +1025,7 @@ def page_inventaris() -> None:
 
     # ── Verbruiksanalyse ──────────────────────────────────────────────────
     st.divider()
-    st.subheader("Verbruikspatronen")
+    st.markdown('<p class="section-label">Verbruikspatronen</p>', unsafe_allow_html=True)
     st.caption("Gebaseerd op historisch dagverbruik. Helpt bij het verbeteren van besteladvies.")
 
     df_analyse = inv.laad_verbruik_analyse(tenant_id)
@@ -751,10 +1050,10 @@ def page_inventaris() -> None:
 def page_leerrapport() -> None:
     tenant_id = st.session_state.tenant_id
 
-    st.title("📈  Leerrapport")
-    st.caption(
-        "Elke dag dat je het werkelijke resultaat invult, leert het systeem. "
-        "De correctiefactor per weekdag wordt automatisch toegepast op de volgende forecast."
+    _page_header(
+        "Leerrapport",
+        "Elke dag dat het werkelijke resultaat wordt ingevuld, leert het systeem. "
+        "De correctiefactor per weekdag wordt automatisch toegepast op de volgende forecast.",
     )
 
     overzicht = learning.laad_accuracy_overzicht(tenant_id)
@@ -767,7 +1066,7 @@ def page_leerrapport() -> None:
         _toon_log_tabel(tenant_id)
         return
 
-    st.subheader("Accuraatheid per weekdag")
+    st.markdown('<p class="section-label">Accuraatheid per weekdag</p>', unsafe_allow_html=True)
     st.dataframe(
         overzicht.style.format({
             "Gem. afwijking %": "{:+.1f}%",
@@ -785,9 +1084,9 @@ def page_leerrapport() -> None:
     )
 
     st.divider()
-    st.subheader("Notities & patronen")
+    st.markdown('<p class="section-label">Notities & patronen</p>', unsafe_allow_html=True)
     st.caption(
-        "Notities die je op het sluitscherm schrijft worden bijgehouden. "
+        "Notities die op het sluitscherm worden geschreven, worden bijgehouden. "
         "Zodra dezelfde notitie 2+ keer is genoteerd, verschijnt hier de gemiddelde afwijking."
     )
     notitie_df = learning.laad_notitie_analyse(tenant_id)
@@ -808,7 +1107,7 @@ def page_leerrapport() -> None:
 
 
 def _toon_log_tabel(tenant_id: str) -> None:
-    st.subheader("Forecast log")
+    st.markdown('<p class="section-label">Forecast log</p>', unsafe_allow_html=True)
     df = learning._alle_logs(tenant_id)
     if df.empty:
         st.info("Nog geen forecasts gelogd.")
@@ -834,7 +1133,7 @@ def _toon_log_tabel(tenant_id: str) -> None:
         "predicted_covers": "Voorspeld",
         "actual_covers":    "Werkelijk",
         "afwijking":        "Afwijking",
-        "notitie":          "Notitie manager",
+        "notitie":          "Notitie",
     })
     st.dataframe(weergave, hide_index=True, use_container_width=True)
 
@@ -845,12 +1144,11 @@ def page_admin() -> None:
         st.error("Geen toegang.")
         return
 
-    st.title("⚙️  Beheer")
+    _page_header("Beheer", "Klanten en gebruikers beheren.")
     tab_klanten, tab_gebruikers = st.tabs(["Klanten", "Gebruikers"])
 
-    # ── Tab: Klanten ──────────────────────────────────────────────────────
     with tab_klanten:
-        st.subheader("Bestaande klanten")
+        st.markdown('<p class="section-label">Bestaande klanten</p>', unsafe_allow_html=True)
         tenants = db.laad_alle_tenants()
         if tenants:
             st.dataframe(
@@ -863,7 +1161,7 @@ def page_admin() -> None:
             st.info("Nog geen klanten gevonden.")
 
         st.divider()
-        st.subheader("Nieuwe klant toevoegen")
+        st.markdown('<p class="section-label">Nieuwe klant toevoegen</p>', unsafe_allow_html=True)
         with st.form("form_nieuwe_tenant"):
             naam  = st.text_input("Naam restaurant", placeholder="Restaurant De Bijenkorf")
             slug  = st.text_input(
@@ -879,14 +1177,13 @@ def page_admin() -> None:
                 else:
                     nieuw_id = db.maak_tenant_aan(naam.strip(), slug.strip().lower())
                     if nieuw_id:
-                        st.success(f"✅ Klant aangemaakt! UUID: `{nieuw_id}`")
+                        st.success(f"Klant aangemaakt. UUID: `{nieuw_id}`")
                         st.info("Maak nu een gebruiker aan in de tab 'Gebruikers'.")
                     else:
                         st.error("Aanmaken mislukt — slug bestaat mogelijk al.")
 
-    # ── Tab: Gebruikers ───────────────────────────────────────────────────
     with tab_gebruikers:
-        st.subheader("Bestaande gebruikers")
+        st.markdown('<p class="section-label">Bestaande gebruikers</p>', unsafe_allow_html=True)
         gebruikers = db.laad_alle_gebruikers()
         if gebruikers:
             df_g = pd.DataFrame(gebruikers)[
@@ -900,7 +1197,7 @@ def page_admin() -> None:
             st.info("Nog geen gebruikers gevonden.")
 
         st.divider()
-        st.subheader("Nieuwe gebruiker toevoegen")
+        st.markdown('<p class="section-label">Nieuwe gebruiker toevoegen</p>', unsafe_allow_html=True)
         tenants = db.laad_alle_tenants()
         if not tenants:
             st.warning("Maak eerst een klant aan.")
@@ -926,15 +1223,14 @@ def page_admin() -> None:
                             rol, volledige_naam.strip()
                         )
                         if gelukt:
-                            st.success(
-                                f"✅ Gebruiker **{gebruikersnaam}** aangemaakt voor {gekozen_tenant}."
-                            )
+                            st.success(f"Gebruiker **{gebruikersnaam}** aangemaakt voor {gekozen_tenant}.")
                         else:
                             st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
 
 
 # ── Navigatie ──────────────────────────────────────────────────────────────
 def main() -> None:
+    _css()
     init_state()
 
     if not st.session_state.ingelogd:
@@ -942,14 +1238,17 @@ def main() -> None:
         return
 
     with st.sidebar:
-        # Tenant + gebruiker banner
-        st.markdown(f"### 🍟 {st.session_state.tenant_naam}")
-        st.caption(
-            f"**{st.session_state.user_naam}** · {st.session_state.user_rol}"
+        st.markdown(
+            f"<p style='font-size:0.6875rem;font-weight:600;letter-spacing:0.07em;"
+            f"text-transform:uppercase;color:#9ca3af;margin-bottom:2px'>"
+            f"{st.session_state.tenant_naam}</p>"
+            f"<p style='font-size:0.8125rem;color:#374151;margin:0'>"
+            f"{st.session_state.user_naam} &middot; {st.session_state.user_rol}</p>",
+            unsafe_allow_html=True,
         )
         st.divider()
 
-        nav_opties = PAGINAS_ADMIN if st.session_state.user_rol == "admin" else PAGINAS
+        nav_opties  = PAGINAS_ADMIN if st.session_state.user_rol == "admin" else PAGINAS
         _pagina_idx = nav_opties.index(st.session_state.pagina) if st.session_state.pagina in nav_opties else 0
         pagina = st.radio(
             "Navigatie",
@@ -963,9 +1262,9 @@ def main() -> None:
 
         st.divider()
         st.caption("Voortgang")
-        st.write("✅ Dag afgesloten"         if st.session_state.closing_data        else "⬜ Dag afsluiten")
-        st.write("✅ Forecast berekend"      if st.session_state.forecast_result     else "⬜ Forecast")
-        st.write("✅ Bestelling goedgekeurd" if st.session_state.approved_orders is not None else "⬜ Bestelreview")
+        st.write("Dag afgesloten"         if st.session_state.closing_data        else "— Dag afsluiten")
+        st.write("Forecast berekend"      if st.session_state.forecast_result     else "— Forecast")
+        st.write("Bestelling goedgekeurd" if st.session_state.approved_orders is not None else "— Bestelreview")
 
         st.divider()
         if st.button("Uitloggen", use_container_width=True):
@@ -973,17 +1272,17 @@ def main() -> None:
             st.rerun()
 
     scherm = st.session_state.pagina
-    if scherm == "📋  Dag afsluiten":
+    if scherm == PAGE_CLOSING:
         page_closing()
-    elif scherm == "📊  Forecast morgen":
+    elif scherm == PAGE_FORECAST:
         page_forecast()
-    elif scherm == "✅  Bestelreview":
+    elif scherm == PAGE_REVIEW:
         page_review()
-    elif scherm == "📤  Export":
+    elif scherm == PAGE_EXPORT:
         page_export()
-    elif scherm == "📦  Inventaris":
+    elif scherm == PAGE_INVENTARIS:
         page_inventaris()
-    elif scherm == "⚙️  Admin":
+    elif scherm == PAGE_ADMIN:
         page_admin()
     else:
         page_leerrapport()
