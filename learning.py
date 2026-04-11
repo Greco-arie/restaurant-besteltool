@@ -1,52 +1,57 @@
 """
-Leermodule — bijhoudt forecast vs. werkelijk resultaat per weekdag via Supabase.
+Leermodule — bijhoudt forecast vs. werkelijk resultaat per weekdag, tenant-aware.
 
 Werking:
-- Elke dag wordt een forecast_log rij aangemaakt met predicted_covers
-- Na afloop vult de manager de werkelijke bonnen in → actual_covers
-- bereken_correctiefactor() levert een factor per weekdag (bijv. 1.08 = systeem zat 8% te laag)
-- forecast.py past de baseline aan met die factor
+- Elke dag groeit forecast_log met 1 rij (predicted_covers)
+- Manager vult werkelijke bonnen in → actual_covers
+- bereken_correctiefactor() levert factor per weekdag per tenant
 - Begrensd op 0.75–1.30 zodat het systeem niet doorslaat
-
-Geen ML, geen black-box. Elke correctie is herleidbaar tot concrete dagdata.
 """
 from __future__ import annotations
 from datetime import date
 import pandas as pd
-
 import db
 
 CORRECTIE_MIN  = 0.75
 CORRECTIE_MAX  = 1.30
-MIN_DATAPUNTEN = 3   # minimum rijen per weekdag voordat correctie actief is
-N_RECENTE      = 8   # gebruik de laatste N vergelijkbare weekdagen
+MIN_DATAPUNTEN = 3
+N_RECENTE      = 8
 
 
-def _alle_logs() -> pd.DataFrame:
-    """Laad alle forecast_log rijen uit Supabase als DataFrame."""
+def _alle_logs(tenant_id: str) -> pd.DataFrame:
+    """Laad alle forecast_log rijen voor een tenant."""
     try:
-        resp = db.get_client().table("forecast_log").select("*").order("datum").execute()
+        resp = (
+            db.get_client()
+            .table("forecast_log")
+            .select("*")
+            .eq("tenant_id", tenant_id)
+            .order("datum")
+            .execute()
+        )
         if not resp.data:
             return pd.DataFrame(columns=[
                 "datum", "weekdag", "event_naam", "predicted_covers",
-                "actual_covers", "omzet_werkelijk", "notitie"
+                "actual_covers", "omzet_werkelijk", "notitie",
             ])
         return pd.DataFrame(resp.data)
     except Exception:
         return pd.DataFrame(columns=[
             "datum", "weekdag", "event_naam", "predicted_covers",
-            "actual_covers", "omzet_werkelijk", "notitie"
+            "actual_covers", "omzet_werkelijk", "notitie",
         ])
 
 
 def log_forecast(
+    tenant_id:        str,
     datum_morgen:     date,
     predicted_covers: int,
     event_naam:       str,
     notitie:          str = "",
 ) -> None:
-    """Sla de forecast op voor morgen. actual_covers en omzet_werkelijk zijn nog leeg."""
+    """Sla de forecast op. actual_covers en omzet_werkelijk zijn nog leeg."""
     db.get_client().table("forecast_log").upsert({
+        "tenant_id":        tenant_id,
         "datum":            datum_morgen.isoformat(),
         "weekdag":          datum_morgen.weekday(),
         "event_naam":       event_naam,
@@ -54,34 +59,40 @@ def log_forecast(
         "actual_covers":    None,
         "omzet_werkelijk":  None,
         "notitie":          notitie.strip(),
-    }, on_conflict="datum").execute()
+    }, on_conflict="datum,tenant_id").execute()
 
 
 def log_werkelijk(
+    tenant_id:       str,
     datum:           date,
     actual_covers:   int,
     omzet_werkelijk: float,
 ) -> bool:
-    """Vul het werkelijke resultaat in voor een eerder gelogde dag. Geeft True als gevonden."""
+    """Vul het werkelijke resultaat in voor een eerder gelogde dag. True als gevonden."""
     datum_str = datum.isoformat()
     sb = db.get_client()
-    resp = sb.table("forecast_log").select("id").eq("datum", datum_str).execute()
+    resp = (
+        sb.table("forecast_log")
+        .select("id")
+        .eq("tenant_id", tenant_id)
+        .eq("datum", datum_str)
+        .execute()
+    )
     if not resp.data:
         return False
     sb.table("forecast_log").update({
         "actual_covers":   actual_covers,
         "omzet_werkelijk": omzet_werkelijk,
-    }).eq("datum", datum_str).execute()
+    }).eq("tenant_id", tenant_id).eq("datum", datum_str).execute()
     return True
 
 
-def bereken_correctiefactor(weekdag: int) -> tuple[float, str]:
+def bereken_correctiefactor(tenant_id: str, weekdag: int) -> tuple[float, str]:
     """
-    Geeft (correctiefactor, uitleg) terug voor de gegeven weekdag.
-    Factor = gemiddelde van (actual / predicted) over de laatste N_RECENTE voltooide rijen.
-    Alleen actief als MIN_DATAPUNTEN of meer rijen beschikbaar zijn.
+    Geeft (correctiefactor, uitleg) terug voor de gegeven weekdag en tenant.
+    Factor = gemiddelde van actual/predicted over de laatste N_RECENTE voltooide rijen.
     """
-    df = _alle_logs()
+    df = _alle_logs(tenant_id)
     df = df[
         (df["weekdag"] == weekdag) &
         df["actual_covers"].notna() &
@@ -109,24 +120,21 @@ def bereken_correctiefactor(weekdag: int) -> tuple[float, str]:
     return factor, uitleg
 
 
-def laad_accuracy_overzicht() -> pd.DataFrame | None:
-    """Geeft een overzicht van forecast-accuraatheid per weekdag voor de UI."""
-    df = _alle_logs()
-    df = df[
-        df["actual_covers"].notna() &
-        df["predicted_covers"].notna()
-    ].copy()
+def laad_accuracy_overzicht(tenant_id: str) -> pd.DataFrame | None:
+    """Overzicht van forecast-accuraatheid per weekdag voor de UI."""
+    df = _alle_logs(tenant_id)
+    df = df[df["actual_covers"].notna() & df["predicted_covers"].notna()].copy()
     df = df[df["predicted_covers"].astype(float) > 0]
 
     if df.empty:
         return None
 
-    df["predicted_covers"] = df["predicted_covers"].astype(float)
-    df["actual_covers"]    = df["actual_covers"].astype(float)
-    df["weekdag"]          = df["weekdag"].astype(int)
-    df["afwijking_pct"]    = ((df["actual_covers"] - df["predicted_covers"])
-                              / df["predicted_covers"] * 100).round(1)
-    df["abs_afwijking_pct"]= df["afwijking_pct"].abs()
+    df["predicted_covers"]  = df["predicted_covers"].astype(float)
+    df["actual_covers"]     = df["actual_covers"].astype(float)
+    df["weekdag"]           = df["weekdag"].astype(int)
+    df["afwijking_pct"]     = ((df["actual_covers"] - df["predicted_covers"])
+                               / df["predicted_covers"] * 100).round(1)
+    df["abs_afwijking_pct"] = df["afwijking_pct"].abs()
 
     WEEKDAGNAMEN = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
     overzicht = (
@@ -156,12 +164,9 @@ def laad_accuracy_overzicht() -> pd.DataFrame | None:
     })
 
 
-def laad_notitie_analyse() -> pd.DataFrame | None:
-    """
-    Geeft een tabel terug van unieke notities met hun gemiddelde afwijking.
-    Minimum 2 datapunten per notitie om ruis te vermijden.
-    """
-    df = _alle_logs()
+def laad_notitie_analyse(tenant_id: str) -> pd.DataFrame | None:
+    """Unieke notities met gemiddelde afwijking. Minimum 2 datapunten."""
+    df = _alle_logs(tenant_id)
     df = df[
         df["actual_covers"].notna() &
         df["predicted_covers"].notna() &
@@ -202,11 +207,18 @@ def laad_notitie_analyse() -> pd.DataFrame | None:
     })
 
 
-def heeft_open_werkelijk(datum: date) -> bool:
-    """True als er een forecast-rij is voor deze datum zonder werkelijk resultaat."""
+def heeft_open_werkelijk(tenant_id: str, datum: date) -> bool:
+    """True als er een forecast-rij bestaat voor deze datum zonder werkelijk resultaat."""
     try:
         datum_str = datum.isoformat()
-        resp = db.get_client().table("forecast_log").select("actual_covers").eq("datum", datum_str).execute()
+        resp = (
+            db.get_client()
+            .table("forecast_log")
+            .select("actual_covers")
+            .eq("tenant_id", tenant_id)
+            .eq("datum", datum_str)
+            .execute()
+        )
         if not resp.data:
             return False
         return resp.data[0]["actual_covers"] is None

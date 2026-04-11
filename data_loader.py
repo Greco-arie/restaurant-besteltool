@@ -1,8 +1,7 @@
-"""Data loading + persistentie — normaliseert en slaat dagdata op via Supabase."""
+"""Data loading + persistentie — tenant-aware, normaliseert en slaat dagdata op via Supabase."""
 from pathlib import Path
 from datetime import date
 import pandas as pd
-
 import db
 
 DEMO_DIR = Path(__file__).parent / "demo_data"
@@ -14,33 +13,31 @@ SUPPLIER_NAMEN = {
     "beer":      "Heineken Distrib.",
 }
 
-# E-mailadres + aanhef per leverancier — pas aan naar werkelijke contactpersonen
 SUPPLIER_CONFIG: dict[str, dict] = {
     "Hanos": {
-        "email":    "inkoop@hanos.nl",
-        "aanhef":   "Beste Hanos,",
+        "email":  "inkoop@hanos.nl",
+        "aanhef": "Beste Hanos,",
     },
     "Vers Leverancier": {
-        "email":    "orders@versleverancier.nl",
-        "aanhef":   "Beste leverancier,",
+        "email":  "orders@versleverancier.nl",
+        "aanhef": "Beste leverancier,",
     },
     "Bakkersland": {
-        "email":    "orders@bakkersland.nl",
-        "aanhef":   "Beste Bakkersland,",
+        "email":  "orders@bakkersland.nl",
+        "aanhef": "Beste Bakkersland,",
     },
     "Heineken Distrib.": {
-        "email":    "orders@heineken.nl",
-        "aanhef":   "Beste Heineken,",
+        "email":  "orders@heineken.nl",
+        "aanhef": "Beste Heineken,",
     },
 }
 
-# SKU-groepen voor ratio-multipliers
 FRIES_SKUS   = {"SKU-001", "SKU-002"}
 DESSERT_SKUS = {"SKU-027", "SKU-028"}
-DRINKS_SKUS  = {"SKU-029", "SKU-030"}  # Cola + Heineken — terras-gevoelig
+DRINKS_SKUS  = {"SKU-029", "SKU-030"}
 
 
-# ── Statische CSV data (producten, events, reserveringen) ─────────────────
+# ── Statische CSV data (niet tenant-specifiek) ────────────────────────────
 
 def load_products() -> pd.DataFrame:
     df = pd.read_csv(DEMO_DIR / "products.csv")
@@ -71,12 +68,19 @@ def load_reservations(datum_str: str | None = None) -> pd.DataFrame:
     return df
 
 
-# ── Supabase: verkoophistorie ─────────────────────────────────────────────
+# ── Supabase: verkoophistorie (tenant-aware) ──────────────────────────────
 
-def load_sales_history() -> pd.DataFrame:
-    """Laad alle verkoopdagen uit Supabase."""
+def load_sales_history(tenant_id: str) -> pd.DataFrame:
+    """Laad alle verkoopdagen voor de opgegeven tenant."""
     try:
-        resp = db.get_client().table("sales_history").select("*").order("date").execute()
+        resp = (
+            db.get_client()
+            .table("sales_history")
+            .select("*")
+            .eq("tenant_id", tenant_id)
+            .order("date")
+            .execute()
+        )
         if not resp.data:
             return pd.DataFrame(columns=["datum", "weekdag", "covers", "omzet"])
         df = pd.DataFrame(resp.data)
@@ -89,41 +93,52 @@ def load_sales_history() -> pd.DataFrame:
 
 
 def sla_dag_op(
+    tenant_id:     str,
     datum:         date,
     covers:        int,
     omzet:         float,
     reserveringen: int = 0,
     notitie:       str = "",
 ) -> None:
-    """Sla de closing-data op in Supabase. Overschrijft als de datum al bestaat."""
+    """Sla de closing-data op voor de gegeven tenant. Overschrijft als datum al bestaat."""
     WEEKDAGEN_ENG = ["Mon", "Tue", "Wed", "Thu", "Fri", "Sat", "Sun"]
     db.get_client().table("sales_history").upsert({
+        "tenant_id":   tenant_id,
         "date":        datum.isoformat(),
         "weekday":     WEEKDAGEN_ENG[datum.weekday()],
         "covers":      covers,
         "revenue_eur": omzet,
         "note":        notitie,
-    }, on_conflict="date").execute()
+    }, on_conflict="date,tenant_id").execute()
 
 
-# ── Supabase: voorraad ────────────────────────────────────────────────────
+# ── Supabase: voorraad (tenant-aware) ────────────────────────────────────
 
-def load_stock_count(datum_str: str | None = None) -> pd.DataFrame:
+def load_stock_count(tenant_id: str) -> pd.DataFrame:
     """
-    Laad voorraadtelling uit Supabase.
-    Zonder datum_str: meest recente dag. Fallback naar demo_data CSV als DB leeg is.
+    Laad meest recente voorraadtelling voor de opgegeven tenant.
+    Fallback naar demo_data CSV als database leeg is.
     """
     try:
         sb = db.get_client()
-        if datum_str:
-            resp = sb.table("stock_count").select("*").eq("date", datum_str).execute()
-        else:
-            # Meest recente datum ophalen
-            latest = sb.table("stock_count").select("date").order("date", desc=True).limit(1).execute()
-            if not latest.data:
-                return _load_stock_count_csv()
-            resp = sb.table("stock_count").select("*").eq("date", latest.data[0]["date"]).execute()
+        latest = (
+            sb.table("stock_count")
+            .select("date")
+            .eq("tenant_id", tenant_id)
+            .order("date", desc=True)
+            .limit(1)
+            .execute()
+        )
+        if not latest.data:
+            return _load_stock_count_csv()
 
+        resp = (
+            sb.table("stock_count")
+            .select("*")
+            .eq("tenant_id", tenant_id)
+            .eq("date", latest.data[0]["date"])
+            .execute()
+        )
         if not resp.data:
             return _load_stock_count_csv()
 
@@ -135,7 +150,6 @@ def load_stock_count(datum_str: str | None = None) -> pd.DataFrame:
 
 
 def _load_stock_count_csv() -> pd.DataFrame:
-    """Fallback: laad standaard voorraad uit demo_data CSV."""
     pad = DEMO_DIR / "stock_count.csv"
     if not pad.exists():
         return pd.DataFrame(columns=["product_id", "hoeveelheid"])
@@ -146,13 +160,14 @@ def _load_stock_count_csv() -> pd.DataFrame:
     return df[df["datum"] == df["datum"].max()][["product_id", "hoeveelheid"]].reset_index(drop=True)
 
 
-def sla_stock_op(datum: date, df_stock: pd.DataFrame) -> None:
+def sla_stock_op(tenant_id: str, datum: date, df_stock: pd.DataFrame) -> None:
     """
-    Sla de closing-stock op in Supabase.
+    Sla historische voorraadtelling op in stock_count.
     df_stock verwacht kolommen: product_id, hoeveelheid.
     """
     rows = [
         {
+            "tenant_id":   tenant_id,
             "date":        datum.isoformat(),
             "sku_id":      row["product_id"],
             "on_hand_qty": float(row["hoeveelheid"]),
@@ -161,36 +176,30 @@ def sla_stock_op(datum: date, df_stock: pd.DataFrame) -> None:
         }
         for _, row in df_stock.iterrows()
     ]
-    db.get_client().table("stock_count").upsert(rows, on_conflict="date,sku_id").execute()
+    db.get_client().table("stock_count").upsert(
+        rows, on_conflict="date,sku_id,tenant_id"
+    ).execute()
 
 
 # ── E-mail ────────────────────────────────────────────────────────────────
 
 def genereer_mailto(leverancier: str, df_lev: pd.DataFrame, bestel_datum: str) -> str:
-    """
-    Geeft een mailto: URL terug voor één leverancier.
-    df_lev verwacht kolommen: naam, besteladvies, eenheid.
-    """
     import urllib.parse
-
     cfg    = SUPPLIER_CONFIG.get(leverancier, {"email": "", "aanhef": "Beste leverancier,"})
     email  = cfg["email"]
     aanhef = cfg["aanhef"]
 
-    onderwerp = f"Bestelling Family Maarssen — {leverancier} — {bestel_datum}"
-
+    onderwerp = f"Bestelling — {leverancier} — {bestel_datum}"
     regels = "\n".join(
         f"  - {row['naam']}: {int(row['besteladvies'])} {row['eenheid']}"
         for _, row in df_lev.iterrows()
     )
-
     body = (
         f"{aanhef}\n\n"
         f"Hierbij onze bestelling voor levering op {bestel_datum}:\n\n"
         f"{regels}\n\n"
         f"Graag bevestiging van ontvangst.\n\n"
         f"Met vriendelijke groet,\n"
-        f"Family Maarssen — Bisonspoor"
+        f"Restaurant besteltool"
     )
-
     return f"mailto:{email}?subject={urllib.parse.quote(onderwerp)}&body={urllib.parse.quote(body)}"
