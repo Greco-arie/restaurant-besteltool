@@ -116,11 +116,25 @@ def _toon_voltooid_overlay(page_key: str) -> None:
 
     st.markdown("""
     <style>
-    /* Dim alles behalve de eerste knop (de reset-knop hierboven) */
+    /* Donkere overlay over de hoofdinhoud — sidebar blijft altijd vrij */
     .stMainBlockContainer > div:not(:first-child) {
-        opacity: 0.38;
+        position: relative;
         pointer-events: none;
         user-select: none;
+    }
+    .stMainBlockContainer > div:not(:first-child)::after {
+        content: "";
+        position: fixed;
+        inset: 0;
+        background: rgba(0, 0, 0, 0.55);
+        z-index: 999;
+        pointer-events: none;
+    }
+    /* Sidebar nooit raken */
+    [data-testid="stSidebar"] {
+        pointer-events: auto !important;
+        opacity: 1 !important;
+        z-index: 1000;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -147,10 +161,10 @@ def page_closing() -> None:
         st.subheader("Vandaag")
         datum_vandaag = st.date_input("Datum", value=datum_vandaag, format="DD/MM/YYYY")
         datum_morgen  = datum_vandaag + timedelta(days=1)
-        covers        = st.number_input("Bonnen vandaag", min_value=0, step=1, value=265,
+        covers        = st.number_input("Bonnen vandaag", min_value=0, step=1, value=0,
                                         help="Totaal aantal orders/gasten vandaag")
         omzet         = st.number_input("Omzet vandaag (€)", min_value=0.0, step=50.0,
-                                        value=3980.0)
+                                        value=0.0)
 
     with col2:
         st.subheader("Morgen")
