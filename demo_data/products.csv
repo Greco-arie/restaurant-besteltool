@@ -1,0 +1,31 @@
+sku_id,sku_name,base_unit,pack_qty,pack_unit,perishability,supplier_type,demand_per_cover,buffer_pct,min_stock,round_to_pack,lead_time_days
+SKU-001,Friet diepvries (standaard),kg,10,kg,low,wholesale,0.19,0.2,10,1,1
+SKU-002,Raspatat diepvries,kg,10,kg,low,wholesale,0.03,0.2,10,1,1
+SKU-003,Rundburger patty,stuk,20,stuk,low,wholesale,0.22,0.15,20,1,1
+SKU-004,Kipburger filet,stuk,20,stuk,low,wholesale,0.07,0.15,20,1,1
+SKU-005,Falafelburger patty,stuk,20,stuk,low,wholesale,0.03,0.15,20,1,1
+SKU-006,Brioche burgerbun,stuk,24,stuk,medium,bakery,0.28,0.1,24,1,1
+SKU-007,Burger kaas slices,stuk,100,stuk,medium,wholesale,0.15,0.1,100,1,2
+SKU-008,Bacon strips,kg,1,kg,medium,wholesale,0.009,0.1,1,1,2
+SKU-009,IJsbergsla/bladmix,kg,1,kg,high,fresh,0.018,0.1,1,1,1
+SKU-010,Tomaat,kg,5,kg,high,fresh,0.015,0.1,5,1,1
+SKU-011,Komkommer,stuk,12,stuk,high,fresh,0.04,0.1,12,1,1
+SKU-012,Rode ui (vers),kg,5,kg,medium,fresh,0.006,0.1,5,1,2
+SKU-013,Augurk schijfjes,kg,2.5,kg,low,wholesale,0.003,0.1,2.5,1,7
+SKU-014,Champignons,kg,3,kg,high,fresh,0.006,0.1,3,1,1
+SKU-015,Burger relish,kg,2.5,kg,low,wholesale,0.002,0.1,2.5,1,7
+SKU-016,Mayonaise,L,10,L,medium,wholesale,0.01,0.1,10,1,7
+SKU-017,Curry saus,L,10,L,medium,wholesale,0.006,0.1,10,1,7
+SKU-018,Ketchup,L,10,L,medium,wholesale,0.004,0.1,10,1,7
+SKU-019,Satésaus,L,5,L,medium,wholesale,0.006,0.1,5,1,3
+SKU-020,Knoflooksaus,L,5,L,medium,wholesale,0.007,0.1,5,1,3
+SKU-021,Chilisaus,L,5,L,medium,wholesale,0.003,0.1,5,1,3
+SKU-022,Van Dobben croquetten,stuk,40,stuk,low,wholesale,0.1,0.15,40,1,2
+SKU-023,Frikandellen,stuk,50,stuk,low,wholesale,0.17,0.15,50,1,2
+SKU-024,Kaassouffles,stuk,40,stuk,low,wholesale,0.07,0.15,40,1,2
+SKU-025,Kipnuggets,stuk,100,stuk,low,wholesale,0.22,0.15,100,1,2
+SKU-026,Bitterballen,stuk,100,stuk,low,wholesale,0.12,0.15,100,1,2
+SKU-027,Softijs mix,L,10,L,medium,fresh,0.014,0.1,10,1,2
+SKU-028,Milkshake base,L,10,L,medium,fresh,0.028,0.1,10,1,2
+SKU-029,Coca-Cola 330ml blik,stuk,24,stuk,low,wholesale,0.2,0.15,24,1,3
+SKU-030,Heineken blik,stuk,24,stuk,low,beer,0.06,0.15,24,1,3
