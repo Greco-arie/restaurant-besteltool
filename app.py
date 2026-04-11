@@ -30,6 +30,7 @@ PAGINAS = [
     "📦  Inventaris",
     "📈  Leerrapport",
 ]
+PAGINAS_ADMIN = PAGINAS + ["⚙️  Admin"]
 
 
 # ── Gecachte data ──────────────────────────────────────────────────────────
@@ -838,6 +839,100 @@ def _toon_log_tabel(tenant_id: str) -> None:
     st.dataframe(weergave, hide_index=True, use_container_width=True)
 
 
+# ── Admin ─────────────────────────────────────────────────────────────────
+def page_admin() -> None:
+    if st.session_state.user_rol != "admin":
+        st.error("Geen toegang.")
+        return
+
+    st.title("⚙️  Beheer")
+    tab_klanten, tab_gebruikers = st.tabs(["Klanten", "Gebruikers"])
+
+    # ── Tab: Klanten ──────────────────────────────────────────────────────
+    with tab_klanten:
+        st.subheader("Bestaande klanten")
+        tenants = db.laad_alle_tenants()
+        if tenants:
+            st.dataframe(
+                pd.DataFrame(tenants)[["name", "slug", "status"]].rename(columns={
+                    "name": "Naam", "slug": "Slug", "status": "Status"
+                }),
+                hide_index=True, use_container_width=True,
+            )
+        else:
+            st.info("Nog geen klanten gevonden.")
+
+        st.divider()
+        st.subheader("Nieuwe klant toevoegen")
+        with st.form("form_nieuwe_tenant"):
+            naam  = st.text_input("Naam restaurant", placeholder="Restaurant De Bijenkorf")
+            slug  = st.text_input(
+                "Slug (unieke code, kleine letters, geen spaties)",
+                placeholder="de-bijenkorf",
+                help="Wordt intern gebruikt als ID. Gebruik alleen a-z, 0-9 en koppeltekens.",
+            )
+            if st.form_submit_button("Klant aanmaken"):
+                if not naam or not slug:
+                    st.error("Vul naam en slug in.")
+                elif " " in slug:
+                    st.error("Slug mag geen spaties bevatten.")
+                else:
+                    nieuw_id = db.maak_tenant_aan(naam.strip(), slug.strip().lower())
+                    if nieuw_id:
+                        st.success(f"✅ Klant aangemaakt! UUID: `{nieuw_id}`")
+                        st.info("Maak nu een gebruiker aan in de tab 'Gebruikers'.")
+                    else:
+                        st.error("Aanmaken mislukt — slug bestaat mogelijk al.")
+
+    # ── Tab: Gebruikers ───────────────────────────────────────────────────
+    with tab_gebruikers:
+        st.subheader("Bestaande gebruikers")
+        gebruikers = db.laad_alle_gebruikers()
+        if gebruikers:
+            df_g = pd.DataFrame(gebruikers)[
+                ["tenant_naam", "username", "role", "full_name", "is_active"]
+            ].rename(columns={
+                "tenant_naam": "Klant", "username": "Gebruikersnaam",
+                "role": "Rol", "full_name": "Naam", "is_active": "Actief",
+            })
+            st.dataframe(df_g, hide_index=True, use_container_width=True)
+        else:
+            st.info("Nog geen gebruikers gevonden.")
+
+        st.divider()
+        st.subheader("Nieuwe gebruiker toevoegen")
+        tenants = db.laad_alle_tenants()
+        if not tenants:
+            st.warning("Maak eerst een klant aan.")
+        else:
+            tenant_opties = {t["name"]: t["id"] for t in tenants}
+            with st.form("form_nieuwe_gebruiker"):
+                gekozen_tenant = st.selectbox("Klant", options=list(tenant_opties.keys()))
+                col1, col2 = st.columns(2)
+                with col1:
+                    gebruikersnaam = st.text_input("Gebruikersnaam")
+                    volledige_naam = st.text_input("Volledige naam")
+                with col2:
+                    wachtwoord = st.text_input("Wachtwoord", type="password")
+                    rol = st.selectbox("Rol", ["manager", "admin"])
+
+                if st.form_submit_button("Gebruiker aanmaken"):
+                    if not gebruikersnaam or not wachtwoord:
+                        st.error("Vul gebruikersnaam en wachtwoord in.")
+                    else:
+                        tenant_id = tenant_opties[gekozen_tenant]
+                        gelukt = db.maak_gebruiker_aan(
+                            tenant_id, gebruikersnaam.strip(), wachtwoord,
+                            rol, volledige_naam.strip()
+                        )
+                        if gelukt:
+                            st.success(
+                                f"✅ Gebruiker **{gebruikersnaam}** aangemaakt voor {gekozen_tenant}."
+                            )
+                        else:
+                            st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
+
+
 # ── Navigatie ──────────────────────────────────────────────────────────────
 def main() -> None:
     init_state()
@@ -854,10 +949,12 @@ def main() -> None:
         )
         st.divider()
 
+        nav_opties = PAGINAS_ADMIN if st.session_state.user_rol == "admin" else PAGINAS
+        _pagina_idx = nav_opties.index(st.session_state.pagina) if st.session_state.pagina in nav_opties else 0
         pagina = st.radio(
             "Navigatie",
-            options=PAGINAS,
-            index=PAGINAS.index(st.session_state.pagina),
+            options=nav_opties,
+            index=_pagina_idx,
             label_visibility="collapsed",
         )
         if pagina != st.session_state.pagina:
@@ -886,6 +983,8 @@ def main() -> None:
         page_export()
     elif scherm == "📦  Inventaris":
         page_inventaris()
+    elif scherm == "⚙️  Admin":
+        page_admin()
     else:
         page_leerrapport()
 

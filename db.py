@@ -12,6 +12,72 @@ def get_client() -> Client:
     return create_client(url, key)
 
 
+def laad_alle_tenants() -> list[dict]:
+    """Geeft alle tenants terug als lijst van dicts."""
+    try:
+        resp = get_client().table("tenants").select("id, name, slug, status").order("name").execute()
+        return resp.data or []
+    except Exception:
+        return []
+
+
+def maak_tenant_aan(name: str, slug: str) -> str | None:
+    """Maak een nieuwe tenant aan. Geeft UUID terug of None bij fout."""
+    try:
+        resp = get_client().table("tenants").insert({"name": name, "slug": slug}).execute()
+        return resp.data[0]["id"] if resp.data else None
+    except Exception:
+        return None
+
+
+def laad_alle_gebruikers() -> list[dict]:
+    """Geeft alle gebruikers terug met tenantnaam."""
+    try:
+        resp = (
+            get_client()
+            .table("tenant_users")
+            .select("id, username, role, full_name, is_active, tenant_id, tenants(name)")
+            .order("username")
+            .execute()
+        )
+        rows = []
+        for u in (resp.data or []):
+            rows.append({
+                "id":           u["id"],
+                "username":     u["username"],
+                "role":         u["role"],
+                "full_name":    u.get("full_name", ""),
+                "is_active":    u.get("is_active", True),
+                "tenant_id":    u["tenant_id"],
+                "tenant_naam":  (u.get("tenants") or {}).get("name", "?"),
+            })
+        return rows
+    except Exception:
+        return []
+
+
+def maak_gebruiker_aan(
+    tenant_id: str,
+    username:  str,
+    password:  str,
+    role:      str,
+    full_name: str,
+) -> bool:
+    """Maak een nieuwe gebruiker aan. True als gelukt."""
+    try:
+        get_client().table("tenant_users").insert({
+            "tenant_id": tenant_id,
+            "username":  username,
+            "password":  password,
+            "role":      role,
+            "full_name": full_name,
+            "is_active": True,
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+
 def verificeer_gebruiker(username: str, password: str) -> dict | None:
     """
     Verifieer inloggegevens tegen de tenant_users tabel.
