@@ -673,17 +673,20 @@ def page_export() -> None:
                     st.warning(f"Geen e-mailadres voor {lev} — stel in via Beheer → Leveranciers")
                 else:
                     mailto = dl.genereer_mailto(lev, df_lev, datum, config_override=cfg_lev)
-                    # components.html om markdown email-autolink te vermijden,
-                    # target="_top" breekt uit Streamlit iframe naar OS mailclient
                     components.html(
-                        f"""<a href="{mailto}" target="_top" style="
-                            display:block;width:100%;padding:10px 16px;
-                            background:#111827;color:#ffffff;text-align:center;
-                            border-radius:6px;text-decoration:none;font-weight:500;
-                            font-size:14px;line-height:1.6;font-family:sans-serif;
-                            box-sizing:border-box;">
+                        f"""<button id="mb_{lev.replace(' ','_')}"
+                            data-href="{mailto}"
+                            style="width:100%;padding:10px 16px;background:#111827;
+                                   color:#fff;border:none;border-radius:6px;
+                                   font-size:14px;font-weight:500;cursor:pointer;
+                                   font-family:sans-serif;box-sizing:border-box;">
                             Mail naar {lev} ({email})
-                        </a>""",
+                        </button>
+                        <script>
+                        document.getElementById("mb_{lev.replace(' ','_')}").addEventListener("click", function() {{
+                            window.location.href = this.getAttribute("data-href");
+                        }});
+                        </script>""",
                         height=52,
                         scrolling=False,
                     )
