@@ -103,6 +103,7 @@ def bereken_forecast(
     df_events:        pd.DataFrame,
     df_reservations:  pd.DataFrame,
     datum_morgen:     date,
+    tenant_id:        str = "",
     manager_override: int | None = None,
 ) -> dict:
     weekdag_morgen = datum_morgen.weekday()
@@ -117,7 +118,7 @@ def bereken_forecast(
         bereken_party_platter_extra(df_reservations, datum_morgen)
     confidence   = bereken_confidence(df_history, weekdag_morgen)
 
-    correctie_factor, correctie_uitleg = learning.bereken_correctiefactor(weekdag_morgen)
+    correctie_factor, correctie_uitleg = learning.bereken_correctiefactor(tenant_id, weekdag_morgen)
     weer = weather.get_weer_morgen(datum_morgen)
     terras_factor = weer["terras_factor"]
     drinks_factor = weer["drinks_factor"]

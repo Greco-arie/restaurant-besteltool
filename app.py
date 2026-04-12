@@ -4,6 +4,7 @@ from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
+import streamlit.components.v1 as components
 
 import data_loader as dl
 import forecast as fc
@@ -67,12 +68,27 @@ def _css() -> None:
         background-color: #1f2937 !important;
     }
 
-    /* Formulier-container: wit */
+    /* Formulier-container: wit met schaduw */
     [data-testid="stForm"] {
         background-color: #ffffff !important;
-        border: 1px solid #e8eaed !important;
-        border-radius: 8px !important;
-        padding: 1.25rem !important;
+        border: 1.5px solid #d1d5db !important;
+        border-radius: 12px !important;
+        padding: 1.5rem !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.09) !important;
+    }
+
+    /* Invoervelden: zichtbare rand */
+    .stTextInput > div > div > input,
+    .stNumberInput > div > div > input {
+        border: 1.5px solid #c0c7d0 !important;
+        border-radius: 6px !important;
+        background-color: #fafafa !important;
+    }
+    .stTextInput > div > div > input:focus,
+    .stNumberInput > div > div > input:focus {
+        border-color: #111827 !important;
+        background-color: #ffffff !important;
+        box-shadow: 0 0 0 2px rgba(17,24,39,0.10) !important;
     }
 
     /* Expander: wit */
@@ -149,6 +165,7 @@ def init_state() -> None:
         "advies_df":       None,
         "approved_orders": None,
         "pagina":          PAGE_CLOSING,
+        "_prev_pagina":    None,
     }.items():
         if key not in st.session_state:
             st.session_state[key] = val
@@ -235,9 +252,13 @@ def page_closing() -> None:
         st.subheader("Vandaag")
         datum_vandaag = st.date_input("Datum", value=datum_vandaag, format="DD/MM/YYYY")
         datum_morgen  = datum_vandaag + timedelta(days=1)
-        covers        = st.number_input("Bonnen vandaag", min_value=0, step=1, value=0,
-                                        help="Totaal aantal orders/gasten vandaag")
-        omzet         = st.number_input("Omzet vandaag (€)", min_value=0.0, step=50.0, value=0.0)
+        covers = st.number_input(
+            "Bonnen vandaag", min_value=0, step=1, value=None, placeholder="0",
+            help="Totaal aantal orders/gasten vandaag",
+        )
+        omzet = st.number_input(
+            "Omzet vandaag (€)", min_value=0.0, step=50.0, value=None, placeholder="0,00",
+        )
 
     with col2:
         st.subheader("Morgen")
@@ -253,20 +274,29 @@ def page_closing() -> None:
         default_p50   = int(df_res_morgen["party_platters_50"].sum()) if not df_res_morgen.empty else 0
 
         reserved_covers = st.number_input(
-            "Reserveringen morgen (bonnen)", min_value=0, step=1, value=default_rc,
-            help="Vaste vooruitbestellingen of groepen. Laat op 0 staan als er niets is.",
+            "Reserveringen morgen (bonnen)", min_value=0, step=1,
+            value=default_rc if default_rc > 0 else None, placeholder="0",
+            help="Vaste vooruitbestellingen of groepen. Laat leeg als er niets is.",
         )
 
         col_p1, col_p2 = st.columns(2)
         with col_p1:
-            platters_25 = st.number_input("Partycatering 25 st", min_value=0, step=1, value=default_p25)
+            platters_25 = st.number_input(
+                "Partycatering 25 st", min_value=0, step=1,
+                value=default_p25 if default_p25 > 0 else None, placeholder="0",
+            )
         with col_p2:
-            platters_50 = st.number_input("Partycatering 50 st", min_value=0, step=1, value=default_p50)
+            platters_50 = st.number_input(
+                "Partycatering 50 st", min_value=0, step=1,
+                value=default_p50 if default_p50 > 0 else None, placeholder="0",
+            )
 
-        if platters_25 or platters_50:
+        p25 = platters_25 or 0
+        p50 = platters_50 or 0
+        if p25 or p50:
             st.info(
-                f"Party platters: {platters_25}× 25st + {platters_50}× 50st "
-                f"(+{platters_25*25 + platters_50*50} extra minisnacks)"
+                f"Party platters: {p25}× 25st + {p50}× 50st "
+                f"(+{p25*25 + p50*50} extra minisnacks)"
             )
 
         bijzonderheden = st.text_area("Bijzonderheden", height=68, value="",
@@ -317,26 +347,31 @@ def page_closing() -> None:
         col_w1, col_w2, col_w3 = st.columns([2, 2, 1])
         with col_w1:
             werkelijk_covers = st.number_input(
-                "Werkelijk aantal bonnen gisteren", min_value=0, step=1, value=0,
-                key="werkelijk_covers"
+                "Werkelijk aantal bonnen gisteren", min_value=0, step=1,
+                value=None, placeholder="0", key="werkelijk_covers",
             )
         with col_w2:
             werkelijk_omzet = st.number_input(
-                "Werkelijke omzet gisteren (€)", min_value=0.0, step=50.0, value=0.0,
-                key="werkelijk_omzet"
+                "Werkelijke omzet gisteren (€)", min_value=0.0, step=50.0,
+                value=None, placeholder="0,00", key="werkelijk_omzet",
             )
         with col_w3:
             st.write("")
             st.write("")
             if st.button("Opslaan", key="btn_werkelijk"):
-                if werkelijk_covers > 0:
+                if werkelijk_covers:
                     opgeslagen = learning.log_werkelijk(
-                        tenant_id, gisteren, int(werkelijk_covers), float(werkelijk_omzet)
+                        tenant_id, gisteren, int(werkelijk_covers),
+                        float(werkelijk_omzet or 0.0),
                     )
                     if opgeslagen:
                         st.success("Resultaat opgeslagen.")
                         st.cache_data.clear()
                         st.rerun()
+                    else:
+                        st.warning("Geen forecast gevonden voor deze datum.")
+                else:
+                    st.error("Vul het werkelijke aantal bonnen in.")
 
     # ── Weerpreview ───────────────────────────────────────────────────────
     st.divider()
@@ -357,20 +392,27 @@ def page_closing() -> None:
 
     st.divider()
     if st.button("Bereken forecast en besteladvies", type="primary", use_container_width=True):
-        if covers == 0:
+        if not covers:
             st.error("Vul het aantal bonnen van vandaag in.")
             return
 
+        covers_int    = int(covers)
+        omzet_float   = float(omzet or 0.0)
+        reserved_int  = int(reserved_covers or 0)
+        platters25_int = int(p25)
+        platters50_int = int(p50)
+
         df_history = get_sales_history(tenant_id)
         result     = fc.bereken_forecast(
-            covers_vandaag   = int(covers),
-            omzet_vandaag    = float(omzet),
-            reserved_covers  = int(reserved_covers),
+            covers_vandaag   = covers_int,
+            omzet_vandaag    = omzet_float,
+            reserved_covers  = reserved_int,
             bijzonderheden   = bijzonderheden,
             df_history       = df_history,
             df_events        = df_events_all,
             df_reservations  = df_res_all,
             datum_morgen     = datum_morgen,
+            tenant_id        = tenant_id,
             manager_override = None,
         )
 
@@ -386,15 +428,15 @@ def page_closing() -> None:
             fries_mult      = result["fries_mult"],
             desserts_mult   = result["desserts_mult"],
             drinks_mult     = result["drinks_factor"],
-            platters_25     = int(platters_25),
-            platters_50     = int(platters_50),
+            platters_25     = platters25_int,
+            platters_50     = platters50_int,
         )
 
-        dl.sla_dag_op(tenant_id, datum_vandaag, int(covers), float(omzet),
-                      int(reserved_covers), bijzonderheden)
+        dl.sla_dag_op(tenant_id, datum_vandaag, covers_int, omzet_float,
+                      reserved_int, bijzonderheden)
         dl.sla_stock_op(tenant_id, datum_vandaag, df_stock_nu)
         inv.sla_sluitstock_op(tenant_id, df_stock_nu, datum_vandaag, created_by=user_naam)
-        inv.log_theoretisch_verbruik(tenant_id, datum_vandaag, int(covers), df_producten)
+        inv.log_theoretisch_verbruik(tenant_id, datum_vandaag, covers_int, df_producten)
         learning.log_forecast(tenant_id, datum_morgen, result["forecast_covers"],
                               result["event_naam"], bijzonderheden)
 
@@ -989,6 +1031,16 @@ def page_admin() -> None:
 def main() -> None:
     _css()
     init_state()
+
+    # Scroll naar boven bij paginawissel
+    _prev = st.session_state.get("_prev_pagina")
+    _curr = st.session_state.pagina
+    if _prev != _curr:
+        st.session_state._prev_pagina = _curr
+        components.html(
+            '<script>window.parent.scrollTo(0, 0);</script>',
+            height=0,
+        )
 
     if not st.session_state.ingelogd:
         page_login()
