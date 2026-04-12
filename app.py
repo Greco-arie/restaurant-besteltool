@@ -674,7 +674,15 @@ def page_export() -> None:
                 if not email:
                     st.warning(f"Geen e-mailadres voor {lev} — stel in via Beheer → Leveranciers")
                 else:
-                    st.link_button(label, mailto, use_container_width=True, type="primary")
+                    st.markdown(
+                        f'<a href="{mailto}" target="_self" style="'
+                        'display:block;width:100%;padding:0.55rem 1rem;'
+                        'background:#111827;color:#ffffff;text-align:center;'
+                        'border-radius:6px;text-decoration:none;font-weight:500;'
+                        'font-size:0.95rem;line-height:1.5;">'
+                        f'{label}</a>',
+                        unsafe_allow_html=True,
+                    )
             with col_csv:
                 csv = df_lev.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -1164,7 +1172,14 @@ def main() -> None:
     if _prev != _curr:
         st.session_state._prev_pagina = _curr
         components.html(
-            '<script>window.parent.scrollTo(0, 0);</script>',
+            """<script>
+            (function() {
+                var el = window.parent.document.querySelector('[data-testid="stAppViewContainer"]');
+                if (el) { el.scrollTo(0, 0); }
+                window.parent.document.querySelector('.main') &&
+                    window.parent.document.querySelector('.main').scrollTo(0, 0);
+            })();
+            </script>""",
             height=0,
         )
 
