@@ -674,19 +674,16 @@ def page_export() -> None:
                 else:
                     mailto = dl.genereer_mailto(lev, df_lev, datum, config_override=cfg_lev)
                     components.html(
-                        f"""<button id="mb_{lev.replace(' ','_')}"
-                            data-href="{mailto}"
-                            style="width:100%;padding:10px 16px;background:#111827;
-                                   color:#fff;border:none;border-radius:6px;
-                                   font-size:14px;font-weight:500;cursor:pointer;
-                                   font-family:sans-serif;box-sizing:border-box;">
+                        f"""<!DOCTYPE html><html><body style="margin:0;padding:0;">
+                        <a href="{mailto}"
+                           style="display:block;width:100%;padding:10px 16px;
+                                  background:#111827;color:#ffffff;text-align:center;
+                                  border-radius:6px;text-decoration:none;font-weight:500;
+                                  font-size:14px;line-height:1.6;font-family:sans-serif;
+                                  box-sizing:border-box;">
                             Mail naar {lev} ({email})
-                        </button>
-                        <script>
-                        document.getElementById("mb_{lev.replace(' ','_')}").addEventListener("click", function() {{
-                            window.location.href = this.getAttribute("data-href");
-                        }});
-                        </script>""",
+                        </a>
+                        </body></html>""",
                         height=52,
                         scrolling=False,
                     )
