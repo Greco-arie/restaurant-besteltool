@@ -183,11 +183,22 @@ def sla_stock_op(tenant_id: str, datum: date, df_stock: pd.DataFrame) -> None:
 
 # ── E-mail ────────────────────────────────────────────────────────────────
 
-def genereer_mailto(leverancier: str, df_lev: pd.DataFrame, bestel_datum: str) -> str:
+def genereer_mailto(
+    leverancier:     str,
+    df_lev:          pd.DataFrame,
+    bestel_datum:    str,
+    config_override: dict | None = None,
+) -> str:
+    """
+    Bouwt een mailto:-URL voor de opgegeven leverancier.
+    config_override: dict van de vorm {"email": "...", "aanhef": "..."}.
+    Als None, valt terug op de hardcoded SUPPLIER_CONFIG defaults.
+    """
     import urllib.parse
-    cfg    = SUPPLIER_CONFIG.get(leverancier, {"email": "", "aanhef": "Beste leverancier,"})
-    email  = cfg["email"]
-    aanhef = cfg["aanhef"]
+    fallback = SUPPLIER_CONFIG.get(leverancier, {"email": "", "aanhef": "Beste leverancier,"})
+    cfg    = config_override if config_override else fallback
+    email  = cfg.get("email",  fallback["email"])
+    aanhef = cfg.get("aanhef", fallback["aanhef"])
 
     onderwerp = f"Bestelling — {leverancier} — {bestel_datum}"
     regels = "\n".join(

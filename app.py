@@ -27,13 +27,15 @@ PAGE_FORECAST    = "Forecast"
 PAGE_REVIEW      = "Bestelreview"
 PAGE_EXPORT      = "Export"
 PAGE_INVENTARIS  = "Inventaris"
+PAGE_PRODUCTEN   = "Producten & Leveranciers"
 PAGE_LEERRAPPORT = "Leerrapport"
 PAGE_ADMIN       = "Beheer"
 
 WEEKDAGEN        = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 CONFIDENCE_LABEL = {"hoog": "Hoog", "gemiddeld": "Gemiddeld", "laag": "Laag"}
 
-PAGINAS       = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT, PAGE_INVENTARIS, PAGE_LEERRAPPORT]
+PAGINAS       = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT,
+                 PAGE_INVENTARIS, PAGE_PRODUCTEN, PAGE_LEERRAPPORT]
 PAGINAS_ADMIN = PAGINAS + [PAGE_ADMIN]
 
 
@@ -146,6 +148,10 @@ def get_events() -> pd.DataFrame:
 @st.cache_data
 def get_stock_count(tenant_id: str) -> pd.DataFrame:
     return dl.load_stock_count(tenant_id)
+
+@st.cache_data
+def get_leverancier_config(tenant_id: str) -> dict:
+    return db.laad_leverancier_config(tenant_id)
 
 @st.cache_data
 def get_reservations() -> pd.DataFrame:
@@ -610,6 +616,8 @@ def page_review() -> None:
 
 # ── Scherm 4 — Export ─────────────────────────────────────────────────────
 def page_export() -> None:
+    tenant_id = st.session_state.tenant_id
+
     st.title("Export")
     st.caption("Bestellijst per leverancier")
 
@@ -620,10 +628,11 @@ def page_export() -> None:
             st.rerun()
         return
 
-    r        = st.session_state.forecast_result
-    approved = st.session_state.approved_orders
-    datum    = r["datum_morgen"].strftime("%Y-%m-%d")
-    dag_naam = WEEKDAGEN[r["weekdag_morgen"]].capitalize()
+    r            = st.session_state.forecast_result
+    approved     = st.session_state.approved_orders
+    lev_config   = get_leverancier_config(tenant_id)
+    datum        = r["datum_morgen"].strftime("%Y-%m-%d")
+    dag_naam     = WEEKDAGEN[r["weekdag_morgen"]].capitalize()
 
     st.caption(
         f"Bestelling voor **{dag_naam} {r['datum_morgen'].strftime('%d %B %Y')}** — "
@@ -658,9 +667,14 @@ def page_export() -> None:
 
             col_mail, col_csv = st.columns([3, 2])
             with col_mail:
-                mailto = dl.genereer_mailto(lev, df_lev, datum)
-                label  = f"Mail naar {lev}" + (f" ({email})" if email else "")
-                st.link_button(label, mailto, use_container_width=True, type="primary")
+                cfg_lev = lev_config.get(lev) or dl.SUPPLIER_CONFIG.get(lev, {})
+                email   = cfg_lev.get("email", "")
+                mailto  = dl.genereer_mailto(lev, df_lev, datum, config_override=cfg_lev)
+                label   = f"Mail naar {lev}" + (f" ({email})" if email else "")
+                if not email:
+                    st.warning(f"Geen e-mailadres voor {lev} — stel in via Beheer → Leveranciers")
+                else:
+                    st.link_button(label, mailto, use_container_width=True, type="primary")
             with col_csv:
                 csv = df_lev.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -843,7 +857,60 @@ def page_inventaris() -> None:
         )
 
 
-# ── Scherm 6 — Leerrapport ────────────────────────────────────────────────
+# ── Scherm 6 — Producten & Leveranciers ──────────────────────────────────
+def page_producten() -> None:
+    tenant_id  = st.session_state.tenant_id
+    lev_config = get_leverancier_config(tenant_id)
+
+    st.title("Producten & Leveranciers")
+    st.caption(
+        "Volledig overzicht van alle artikelen per leverancier. "
+        "E-mailadressen zijn instelbaar via Beheer → Leveranciers."
+    )
+
+    df = get_products()
+
+    LEVERANCIERS_VOLGORDE = ["Hanos", "Vers Leverancier", "Bakkersland", "Heineken Distrib.", "Overig"]
+    alle_leveranciers = [l for l in LEVERANCIERS_VOLGORDE if l in df["leverancier"].values]
+
+    totaal_col1, totaal_col2, totaal_col3 = st.columns(3)
+    totaal_col1.metric("Totaal artikelen",  len(df))
+    totaal_col2.metric("Leveranciers",      df["leverancier"].nunique())
+    totaal_col3.metric("Te bestellen SKUs", len(df[df["minimumvoorraad"] > 0]))
+
+    st.divider()
+
+    for lev in alle_leveranciers:
+        df_lev  = df[df["leverancier"] == lev].copy()
+        cfg     = lev_config.get(lev) or dl.SUPPLIER_CONFIG.get(lev, {})
+        email   = cfg.get("email", "")
+        n       = len(df_lev)
+
+        email_badge = f" · {email}" if email else " · **geen e-mail ingesteld**"
+        with st.expander(f"**{lev}** — {n} artikel(en){email_badge}", expanded=True):
+            weergave = df_lev[[
+                "id", "naam", "eenheid", "verpakkingseenheid",
+                "vraag_per_cover", "buffer_pct", "minimumvoorraad",
+            ]].rename(columns={
+                "id":               "SKU",
+                "naam":             "Artikel",
+                "eenheid":          "Eenheid",
+                "verpakkingseenheid": "Verpakking",
+                "vraag_per_cover":  "Vraag/bon",
+                "buffer_pct":       "Buffer %",
+                "minimumvoorraad":  "Min. voorraad",
+            }).copy()
+            weergave["Buffer %"] = (weergave["Buffer %"] * 100).round(0).astype(int).astype(str) + "%"
+            st.dataframe(weergave, hide_index=True, use_container_width=True)
+
+            if not email:
+                st.warning(
+                    f"Geen e-mailadres ingesteld voor **{lev}**. "
+                    "Stel dit in via Beheer → Leveranciers zodat bestellingen automatisch verstuurd kunnen worden."
+                )
+
+
+# ── Scherm 7 — Leerrapport ────────────────────────────────────────────────
 def page_leerrapport() -> None:
     tenant_id = st.session_state.tenant_id
 
@@ -942,9 +1009,11 @@ def page_admin() -> None:
         st.error("Geen toegang.")
         return
 
+    tenant_id = st.session_state.tenant_id
+
     st.title("Beheer")
-    st.caption("Klanten en gebruikers beheren.")
-    tab_klanten, tab_gebruikers = st.tabs(["Klanten", "Gebruikers"])
+    st.caption("Klanten, gebruikers en leveranciersinstellingen beheren.")
+    tab_klanten, tab_gebruikers, tab_leveranciers = st.tabs(["Klanten", "Gebruikers", "Leveranciers"])
 
     with tab_klanten:
         st.subheader("Bestaande klanten")
@@ -1026,6 +1095,63 @@ def page_admin() -> None:
                         else:
                             st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
 
+    with tab_leveranciers:
+        st.subheader("E-mailadressen per leverancier")
+        st.caption(
+            "Stel het e-mailadres en de aanhef in per leverancier. "
+            "De e-mailknop op de exportpagina gebruikt dit adres om automatisch "
+            "een kant-en-klare bestelling te openen in jouw e-mailprogramma."
+        )
+
+        df_prod      = get_products()
+        lev_config   = get_leverancier_config(tenant_id)
+        leveranciers = sorted(df_prod["leverancier"].unique())
+
+        for lev in leveranciers:
+            cfg      = lev_config.get(lev) or dl.SUPPLIER_CONFIG.get(lev, {})
+            huidig_email  = cfg.get("email", "")
+            huidig_aanhef = cfg.get("aanhef", "Beste leverancier,")
+            n_producten   = len(df_prod[df_prod["leverancier"] == lev])
+
+            status = "Ingesteld" if huidig_email else "Geen e-mail"
+            with st.expander(f"**{lev}** · {n_producten} artikelen · {status}", expanded=not huidig_email):
+                with st.form(f"form_lev_{lev}"):
+                    nieuw_email  = st.text_input(
+                        "E-mailadres leverancier",
+                        value=huidig_email,
+                        placeholder="inkoop@leverancier.nl",
+                        help="Bestellingen worden naar dit adres verzonden via je e-mailprogramma.",
+                    )
+                    nieuw_aanhef = st.text_input(
+                        "Aanhef in e-mail",
+                        value=huidig_aanhef,
+                        placeholder="Beste leverancier,",
+                    )
+                    if st.form_submit_button("Opslaan", type="primary", use_container_width=True):
+                        if not nieuw_email:
+                            st.error("Vul een e-mailadres in.")
+                        elif "@" not in nieuw_email:
+                            st.error("Voer een geldig e-mailadres in.")
+                        else:
+                            ok = db.sla_leverancier_config_op(
+                                tenant_id, lev, nieuw_email, nieuw_aanhef
+                            )
+                            if ok:
+                                st.success(f"Opgeslagen: {lev} → {nieuw_email}")
+                                st.cache_data.clear()
+                                st.rerun()
+                            else:
+                                st.error("Opslaan mislukt — probeer opnieuw.")
+
+        st.divider()
+        st.caption(
+            "**Hoe werkt de e-mailknop?**  \n"
+            "Als je op de exportpagina klikt op 'Mail naar [leverancier]', opent jouw "
+            "standaard e-mailprogramma (Outlook, Gmail, Apple Mail etc.) automatisch met "
+            "het e-mailadres, onderwerp en de volledige bestellijst al ingevuld. "
+            "Jij hoeft alleen nog op Verzenden te klikken."
+        )
+
 
 # ── Navigatie ──────────────────────────────────────────────────────────────
 def main() -> None:
@@ -1087,6 +1213,8 @@ def main() -> None:
         page_export()
     elif scherm == PAGE_INVENTARIS:
         page_inventaris()
+    elif scherm == PAGE_PRODUCTEN:
+        page_producten()
     elif scherm == PAGE_ADMIN:
         page_admin()
     else:

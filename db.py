@@ -78,6 +78,44 @@ def maak_gebruiker_aan(
         return False
 
 
+def laad_leverancier_config(tenant_id: str) -> dict[str, dict]:
+    """
+    Geeft een dict terug: leverancier_naam → {email, aanhef}.
+    Valt terug op lege waarden als de tabel nog niet bestaat of leeg is.
+    """
+    try:
+        resp = (
+            get_client()
+            .table("leverancier_config")
+            .select("leverancier, email, aanhef")
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        return {
+            row["leverancier"]: {"email": row["email"], "aanhef": row["aanhef"]}
+            for row in (resp.data or [])
+        }
+    except Exception:
+        return {}
+
+
+def sla_leverancier_config_op(
+    tenant_id: str, leverancier: str, email: str, aanhef: str
+) -> bool:
+    """Sla e-mail en aanhef op voor een leverancier. True als gelukt."""
+    try:
+        get_client().table("leverancier_config").upsert({
+            "tenant_id":   tenant_id,
+            "leverancier": leverancier,
+            "email":       email.strip(),
+            "aanhef":      aanhef.strip(),
+            "updated_at":  "now()",
+        }, on_conflict="tenant_id,leverancier").execute()
+        return True
+    except Exception:
+        return False
+
+
 def verificeer_gebruiker(username: str, password: str) -> dict | None:
     """
     Verifieer inloggegevens tegen de tenant_users tabel.
