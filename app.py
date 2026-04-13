@@ -984,6 +984,151 @@ def page_producten() -> None:
                     "Stel dit in via Beheer → Leveranciers zodat bestellingen automatisch verstuurd kunnen worden."
                 )
 
+    # ── Nieuw product toevoegen ──────────────────────────────────────────
+    st.divider()
+    with st.expander("➕ Nieuw product toevoegen", expanded=False):
+        st.caption(
+            "Vul alle velden in zoals ze bij de leverancier in het systeem staan. "
+            "SKU-code, eenheid en verpakkingsgrootte bepalen hoe de bestelling wordt berekend."
+        )
+
+        LEVERANCIER_OPTIES = ["Hanos", "Vers Leverancier", "Bakkersland",
+                               "Heineken Distrib.", "Overig"]
+        SUPPLIER_TYPE_MAP  = {
+            "Hanos": "wholesale", "Vers Leverancier": "fresh",
+            "Bakkersland": "bakery", "Heineken Distrib.": "beer", "Overig": "other",
+        }
+
+        with st.form("nieuw_product_form", clear_on_submit=True):
+            c1, c2, c3 = st.columns([1.2, 2.5, 1])
+            with c1:
+                sku_input = st.text_input(
+                    "SKU-code *",
+                    placeholder="bijv. SKU-031",
+                    help="Unieke code zoals bij de leverancier in het systeem staat.",
+                )
+            with c2:
+                naam_input = st.text_input(
+                    "Productnaam *",
+                    placeholder="bijv. Friet diepvries 9mm (10 kg)",
+                    help="Naam zoals op de factuur staat.",
+                )
+            with c3:
+                leverancier_input = st.selectbox(
+                    "Leverancier *",
+                    options=LEVERANCIER_OPTIES,
+                )
+
+            c4, c5, c6, c7 = st.columns(4)
+            with c4:
+                eenheid_input = st.selectbox(
+                    "Eenheid *",
+                    options=["kg", "stuk", "liter", "doos", "fles"],
+                    help="Hoe wordt het product gemeten? (kg, stuk, liter, ...)",
+                )
+            with c5:
+                pack_qty_input = st.number_input(
+                    "Verpakkingsgrootte *",
+                    min_value=0.1, value=10.0, step=0.5,
+                    help="Hoeveel zit er in één besteleenheid? (bijv. 10 voor een zak van 10 kg)",
+                )
+            with c6:
+                pack_unit_input = st.selectbox(
+                    "Verpakkingseenheid",
+                    options=["kg", "stuk", "liter", "doos", "fles"],
+                    help="Eenheid van de verpakking (meestal gelijk aan Eenheid).",
+                )
+            with c7:
+                perishability_input = st.selectbox(
+                    "Houdbaarheid *",
+                    options=["low", "medium", "high"],
+                    format_func=lambda x: {"low": "Laag (weken/maanden)",
+                                           "medium": "Midden (dagen)",
+                                           "high": "Hoog (<1 dag)"}[x],
+                    help="Laag = diepvries/droog  |  Midden = gekoeld  |  Hoog = vers/dag",
+                )
+
+            c8, c9, c10, c11, c12 = st.columns(5)
+            with c8:
+                demand_input = st.number_input(
+                    "Verbruik per gast *",
+                    min_value=0.0, value=0.10, step=0.01, format="%.2f",
+                    help="Hoeveel van dit product gebruik je gemiddeld per couvert?",
+                )
+            with c9:
+                buffer_input = st.number_input(
+                    "Buffer % *",
+                    min_value=0, max_value=100, value=20,
+                    help="Veiligheidsmarge bovenop de verwachte vraag (bijv. 20 = 20%).",
+                )
+            with c10:
+                min_stock_input = st.number_input(
+                    "Min. voorraad *",
+                    min_value=0.0, value=float(pack_qty_input), step=1.0,
+                    help="Minimale hoeveelheid die altijd op voorraad moet zijn.",
+                )
+            with c11:
+                round_to_pack = st.selectbox(
+                    "Afronden op verpakking?",
+                    options=[1, 0],
+                    format_func=lambda x: "Ja (hele dozen)" if x == 1 else "Nee",
+                    help="Ja = altijd hele verpakkingen bestellen.",
+                )
+            with c12:
+                lead_time_input = st.number_input(
+                    "Levertijd (dagen) *",
+                    min_value=1, max_value=14, value=1,
+                    help="Hoeveel dagen duurt het van bestelling tot levering?",
+                )
+
+            opslaan = st.form_submit_button(
+                "Product opslaan", type="primary", use_container_width=False
+            )
+
+        if opslaan:
+            errors = []
+            if not sku_input.strip():
+                errors.append("SKU-code is verplicht.")
+            if not naam_input.strip():
+                errors.append("Productnaam is verplicht.")
+            if sku_input.strip() in df["id"].values:
+                errors.append(f"SKU **{sku_input.strip()}** bestaat al.")
+
+            if errors:
+                for e in errors:
+                    st.error(e)
+            else:
+                import csv
+                from pathlib import Path
+
+                products_path = Path(__file__).parent / "demo_data" / "products.csv"
+                nieuwe_rij = {
+                    "sku_id":           sku_input.strip().upper(),
+                    "sku_name":         naam_input.strip(),
+                    "base_unit":        eenheid_input,
+                    "pack_qty":         pack_qty_input,
+                    "pack_unit":        pack_unit_input,
+                    "perishability":    perishability_input,
+                    "supplier_type":    SUPPLIER_TYPE_MAP.get(leverancier_input, "other"),
+                    "demand_per_cover": round(demand_input, 4),
+                    "buffer_pct":       round(buffer_input / 100, 2),
+                    "min_stock":        min_stock_input,
+                    "round_to_pack":    round_to_pack,
+                    "lead_time_days":   lead_time_input,
+                }
+
+                df_bestaand = pd.read_csv(products_path)
+                df_nieuw    = pd.DataFrame([nieuwe_rij])
+                df_bestaand = pd.concat([df_bestaand, df_nieuw], ignore_index=True)
+                df_bestaand.to_csv(products_path, index=False)
+
+                get_products.clear()
+                st.success(
+                    f"Product **{naam_input.strip()}** ({sku_input.strip().upper()}) "
+                    f"opgeslagen onder **{leverancier_input}**."
+                )
+                st.rerun()
+
 
 # ── Scherm 7 — Leerrapport ────────────────────────────────────────────────
 def page_leerrapport() -> None:
