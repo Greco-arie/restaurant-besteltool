@@ -43,93 +43,150 @@ PAGINAS_ADMIN = PAGINAS + [PAGE_ADMIN]
 def _css() -> None:
     st.markdown("""
     <style>
+    /* ── Design tokens ─────────────────────────────── */
+    :root {
+        --brand-primary:  #2E5AAC;
+        --brand-hover:    #274F99;
+        --brand-active:   #20427F;
+        --soft-selection: #EAF1FF;
+        --text:           #111827;
+        --text-muted:     #4B5563;
+        --page-bg:        #F9FAFB;
+        --surface:        #FFFFFF;
+        --surface-subtle: #F3F4F6;
+        --border:         #CBD5E1;
+        --success:        #16734A;
+        --warning:        #B45309;
+        --error:          #B42318;
+        --accent-warm:    #A8643A;
+        --focus-ring:     rgba(46,90,172,0.28);
+        --disabled-bg:    #E5E7EB;
+        --disabled-text:  #9CA3AF;
+    }
+
     /* Achtergrond app */
-    [data-testid="stApp"] { background-color: #f7f8fa; }
+    [data-testid="stApp"] { background-color: var(--page-bg); }
 
-    /* Sidebar wit met subtiele rand */
+    /* Sidebar: subtle surface met subtiele rand */
     [data-testid="stSidebar"] {
-        background-color: #ffffff !important;
-        border-right: 1px solid #e8eaed !important;
+        background-color: var(--surface-subtle) !important;
+        border-right: 1px solid var(--border) !important;
     }
 
-    /* Metric-kaarten: wit, lichte rand */
+    /* Metric-kaarten: wit, lichte rand + schaduw */
     [data-testid="stMetric"] {
-        background-color: #ffffff !important;
-        border: 1px solid #e8eaed !important;
-        border-radius: 8px !important;
+        background-color: var(--surface) !important;
+        border: 1px solid var(--border) !important;
+        border-radius: 12px !important;
         padding: 1rem 1.25rem !important;
+        box-shadow: 0 1px 3px rgba(0,0,0,0.06) !important;
     }
 
-    /* Primaire knop: donker */
+    /* Primaire knop: Ink Indigo */
     button[kind="primary"] {
-        background-color: #111827 !important;
+        background-color: var(--brand-primary) !important;
         border: none !important;
-        border-radius: 6px !important;
+        border-radius: 10px !important;
     }
     button[kind="primary"]:hover {
-        background-color: #1f2937 !important;
+        background-color: var(--brand-hover) !important;
+    }
+    button[kind="primary"]:active {
+        background-color: var(--brand-active) !important;
+    }
+    button[kind="primary"]:focus {
+        box-shadow: 0 0 0 3px var(--focus-ring) !important;
     }
 
     /* Formulier-container: wit met schaduw */
     [data-testid="stForm"] {
-        background-color: #ffffff !important;
-        border: 1.5px solid #d1d5db !important;
+        background-color: var(--surface) !important;
+        border: 1.5px solid var(--border) !important;
         border-radius: 12px !important;
         padding: 1.5rem !important;
-        box-shadow: 0 4px 20px rgba(0,0,0,0.09) !important;
+        box-shadow: 0 4px 20px rgba(0,0,0,0.07) !important;
     }
 
-    /* Invoervelden: zichtbare rand */
+    /* Invoervelden: zichtbare rand + Ink Indigo focus */
     .stTextInput > div > div > input,
     .stNumberInput > div > div > input {
-        border: 1.5px solid #c0c7d0 !important;
+        border: 1.5px solid #C0C7D0 !important;
         border-radius: 6px !important;
-        background-color: #fafafa !important;
+        background-color: #FAFAFA !important;
     }
     .stTextInput > div > div > input:focus,
     .stNumberInput > div > div > input:focus {
-        border-color: #111827 !important;
-        background-color: #ffffff !important;
-        box-shadow: 0 0 0 2px rgba(17,24,39,0.10) !important;
+        border-color: var(--brand-primary) !important;
+        background-color: var(--surface) !important;
+        box-shadow: 0 0 0 3px var(--focus-ring) !important;
     }
 
     /* Expander: wit */
     [data-testid="stExpander"] {
-        background-color: #ffffff !important;
-        border: 1px solid #e8eaed !important;
+        background-color: var(--surface) !important;
+        border: 1px solid var(--border) !important;
         border-radius: 8px !important;
     }
 
-    /* Tabs */
+    /* Tabs: actieve tab krijgt Ink Indigo indicator */
     .stTabs [data-baseweb="tab-list"] {
-        background-color: #f0f1f3 !important;
+        background-color: var(--surface-subtle) !important;
         border-radius: 8px !important;
         padding: 3px !important;
         gap: 2px !important;
     }
     .stTabs [aria-selected="true"] {
-        background-color: #ffffff !important;
+        background-color: var(--surface) !important;
         border-radius: 6px !important;
+        border-bottom: 2px solid var(--brand-primary) !important;
+        color: var(--brand-primary) !important;
     }
 
     /* Divider iets zachter */
-    hr { border-color: #ebebeb !important; }
+    hr { border-color: var(--border) !important; }
 
-    /* Dataframe subtiele rand */
+    /* Dataframe: subtiele rand + zebra-rows */
     [data-testid="stDataFrame"] {
-        border: 1px solid #e8eaed !important;
+        border: 1px solid var(--border) !important;
         border-radius: 8px !important;
         overflow: hidden !important;
-        background: #ffffff !important;
+        background: var(--surface) !important;
+    }
+    tr:nth-child(even) td { background-color: var(--surface-subtle) !important; }
+    tr[aria-selected="true"] td {
+        background-color: var(--soft-selection) !important;
+        color: var(--text) !important;
     }
 
-    /* Link-knop (mailto) */
+    /* Link-knop (mailto): Ink Indigo */
     [data-testid="stLinkButton"] a {
-        background-color: #111827 !important;
-        border-radius: 6px !important;
+        background-color: var(--brand-primary) !important;
+        border-radius: 10px !important;
+    }
+    [data-testid="stLinkButton"] a:hover {
+        background-color: var(--brand-hover) !important;
     }
     </style>
     """, unsafe_allow_html=True)
+
+
+def _status_badge(label: str, kleur: str) -> str:
+    """Geeft een gekleurde pill-badge terug als HTML-string.
+
+    kleur: 'success' | 'warning' | 'error' | 'neutral'
+    """
+    colors: dict[str, tuple[str, str]] = {
+        "success": ("#16734A", "#DCFCE7"),
+        "warning": ("#B45309", "#FEF3C7"),
+        "error":   ("#B42318", "#FEE2E2"),
+        "neutral": ("#4B5563", "#F3F4F6"),
+    }
+    text_c, bg_c = colors.get(kleur, colors["neutral"])
+    return (
+        f'<span style="background:{bg_c};color:{text_c};'
+        f'padding:2px 10px;border-radius:99px;font-size:0.78rem;font-weight:600;'
+        f'display:inline-block;line-height:1.6">{label}</span>'
+    )
 
 
 # ── Gecachte data ──────────────────────────────────────────────────────────
@@ -1310,9 +1367,27 @@ def main() -> None:
 
         st.divider()
         st.caption("Voortgang")
-        st.write("Dag afgesloten"         if st.session_state.closing_data        else "— Dag afsluiten")
-        st.write("Forecast berekend"      if st.session_state.forecast_result     else "— Forecast")
-        st.write("Bestelling goedgekeurd" if st.session_state.approved_orders is not None else "— Bestelreview")
+        dag_ok  = st.session_state.closing_data is not None
+        fc_ok   = st.session_state.forecast_result is not None
+        best_ok = st.session_state.approved_orders is not None
+        st.markdown(
+            _status_badge("Dag afgesloten", "success") + "&nbsp; Dag afsluiten<br>"
+            if dag_ok else
+            _status_badge("Open", "warning") + "&nbsp; Dag afsluiten<br>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            _status_badge("Berekend", "success") + "&nbsp; Forecast<br>"
+            if fc_ok else
+            _status_badge("Open", "warning") + "&nbsp; Forecast<br>",
+            unsafe_allow_html=True,
+        )
+        st.markdown(
+            _status_badge("Goedgekeurd", "success") + "&nbsp; Bestelreview"
+            if best_ok else
+            _status_badge("Open", "warning") + "&nbsp; Bestelreview",
+            unsafe_allow_html=True,
+        )
 
         st.divider()
         if st.button("Uitloggen", use_container_width=True):
