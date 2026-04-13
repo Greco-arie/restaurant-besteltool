@@ -116,6 +116,55 @@ def sla_leverancier_config_op(
         return False
 
 
+def verwijder_gebruiker(user_id: str) -> tuple[bool, str]:
+    """Verwijder een gebruiker op basis van ID. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("tenant_users").delete().eq("id", user_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def update_gebruiker(
+    user_id:   str,
+    username:  str,
+    full_name: str,
+    role:      str,
+    password:  str | None = None,
+) -> tuple[bool, str]:
+    """Pas gebruikersgegevens aan. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        data: dict = {
+            "username":  username,
+            "full_name": full_name,
+            "role":      role,
+        }
+        if password:
+            data["password"] = password
+        get_client().table("tenant_users").update(data).eq("id", user_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def verwijder_tenant(tenant_id: str) -> tuple[bool, str]:
+    """Verwijder een klant op basis van ID. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("tenants").delete().eq("id", tenant_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def update_tenant(tenant_id: str, name: str) -> tuple[bool, str]:
+    """Pas de naam van een klant aan. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("tenants").update({"name": name}).eq("id", tenant_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
 def verificeer_gebruiker(username: str, password: str) -> dict | None:
     """
     Verifieer inloggegevens tegen de tenant_users tabel.

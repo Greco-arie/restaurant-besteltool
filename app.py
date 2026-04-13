@@ -674,16 +674,22 @@ def page_export() -> None:
                 else:
                     mailto = dl.genereer_mailto(lev, df_lev, datum, config_override=cfg_lev)
                     components.html(
-                        f"""<!DOCTYPE html><html><body style="margin:0;padding:0;">
-                        <a href="{mailto}"
-                           style="display:block;width:100%;padding:10px 16px;
-                                  background:#111827;color:#ffffff;text-align:center;
-                                  border-radius:6px;text-decoration:none;font-weight:500;
-                                  font-size:14px;line-height:1.6;font-family:sans-serif;
-                                  box-sizing:border-box;">
-                            Mail naar {lev} ({email})
-                        </a>
-                        </body></html>""",
+                        f"""<button
+                          data-mailto="{mailto}"
+                          onclick="(function(btn){{
+                            var a = window.parent.document.createElement('a');
+                            a.href = btn.getAttribute('data-mailto');
+                            a.style.display = 'none';
+                            window.parent.document.body.appendChild(a);
+                            a.click();
+                            setTimeout(function(){{ a.remove(); }}, 200);
+                          }})(this);"
+                          style="display:block;width:100%;padding:10px 16px;
+                                 background:#111827;color:#ffffff;border:none;
+                                 border-radius:6px;cursor:pointer;font-weight:500;
+                                 font-size:14px;font-family:sans-serif;box-sizing:border-box;">
+                          \U0001f4e7 Mail naar {lev} ({email})
+                        </button>""",
                         height=52,
                         scrolling=False,
                     )
@@ -1030,15 +1036,45 @@ def page_admin() -> None:
     with tab_klanten:
         st.subheader("Bestaande klanten")
         tenants = db.laad_alle_tenants()
-        if tenants:
-            st.dataframe(
-                pd.DataFrame(tenants)[["name", "slug", "status"]].rename(columns={
-                    "name": "Naam", "slug": "Slug", "status": "Status"
-                }),
-                hide_index=True, use_container_width=True,
-            )
-        else:
+        if not tenants:
             st.info("Nog geen klanten gevonden.")
+        for t in tenants:
+            with st.expander(f"**{t['name']}** · {t['slug']} · {t['status']}"):
+                with st.form(f"form_edit_tenant_{t['id']}"):
+                    nieuwe_naam = st.text_input("Naam", value=t["name"])
+                    if st.form_submit_button("Naam opslaan", type="primary"):
+                        if not nieuwe_naam.strip():
+                            st.error("Naam mag niet leeg zijn.")
+                        else:
+                            ok, fout = db.update_tenant(t["id"], nieuwe_naam.strip())
+                            if ok:
+                                st.success("Naam bijgewerkt.")
+                                st.rerun()
+                            else:
+                                st.error(f"Opslaan mislukt: {fout}")
+
+                st.divider()
+                confirm_key = f"confirm_del_tenant_{t['id']}"
+                if st.session_state.get(confirm_key):
+                    st.warning(f"Weet je zeker dat je **{t['name']}** wilt verwijderen? Dit verwijdert ook alle gekoppelde data.")
+                    col_ja, col_nee = st.columns(2)
+                    with col_ja:
+                        if st.button("Ja, verwijder", key=f"ja_tenant_{t['id']}", type="primary"):
+                            ok, fout = db.verwijder_tenant(t["id"])
+                            if ok:
+                                st.session_state.pop(confirm_key, None)
+                                st.success(f"{t['name']} verwijderd.")
+                                st.rerun()
+                            else:
+                                st.error(f"Verwijderen mislukt: {fout}")
+                    with col_nee:
+                        if st.button("Annuleren", key=f"nee_tenant_{t['id']}"):
+                            st.session_state.pop(confirm_key, None)
+                            st.rerun()
+                else:
+                    if st.button("Verwijder klant", key=f"del_tenant_{t['id']}"):
+                        st.session_state[confirm_key] = True
+                        st.rerun()
 
         st.divider()
         st.subheader("Nieuwe klant toevoegen")
@@ -1065,16 +1101,70 @@ def page_admin() -> None:
     with tab_gebruikers:
         st.subheader("Bestaande gebruikers")
         gebruikers = db.laad_alle_gebruikers()
-        if gebruikers:
-            df_g = pd.DataFrame(gebruikers)[
-                ["tenant_naam", "username", "role", "full_name", "is_active"]
-            ].rename(columns={
-                "tenant_naam": "Klant", "username": "Gebruikersnaam",
-                "role": "Rol", "full_name": "Naam", "is_active": "Actief",
-            })
-            st.dataframe(df_g, hide_index=True, use_container_width=True)
-        else:
+        ingelogd_username = st.session_state.get("user_naam", "")
+        if not gebruikers:
             st.info("Nog geen gebruikers gevonden.")
+        for g in gebruikers:
+            label = f"**{g['username']}** · {g['tenant_naam']} · {g['role']}"
+            with st.expander(label):
+                with st.form(f"form_edit_user_{g['id']}"):
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        nieuwe_username  = st.text_input("Gebruikersnaam", value=g["username"])
+                        nieuwe_naam      = st.text_input("Volledige naam",  value=g.get("full_name", ""))
+                    with col2:
+                        nieuw_wachtwoord = st.text_input(
+                            "Nieuw wachtwoord",
+                            type="password",
+                            placeholder="Laat leeg om niet te wijzigen",
+                        )
+                        nieuwe_rol = st.selectbox(
+                            "Rol",
+                            ["manager", "admin"],
+                            index=0 if g["role"] == "manager" else 1,
+                        )
+                    if st.form_submit_button("Opslaan", type="primary"):
+                        if not nieuwe_username.strip():
+                            st.error("Gebruikersnaam mag niet leeg zijn.")
+                        else:
+                            ok, fout = db.update_gebruiker(
+                                g["id"],
+                                nieuwe_username.strip(),
+                                nieuwe_naam.strip(),
+                                nieuwe_rol,
+                                nieuw_wachtwoord or None,
+                            )
+                            if ok:
+                                st.success("Gegevens bijgewerkt.")
+                                st.rerun()
+                            else:
+                                st.error(f"Opslaan mislukt: {fout}")
+
+                st.divider()
+                if g["username"] == ingelogd_username:
+                    st.caption("Je kunt je eigen account niet verwijderen.")
+                else:
+                    confirm_key = f"confirm_del_user_{g['id']}"
+                    if st.session_state.get(confirm_key):
+                        st.warning(f"Weet je zeker dat je **{g['username']}** wilt verwijderen?")
+                        col_ja, col_nee = st.columns(2)
+                        with col_ja:
+                            if st.button("Ja, verwijder", key=f"ja_user_{g['id']}", type="primary"):
+                                ok, fout = db.verwijder_gebruiker(g["id"])
+                                if ok:
+                                    st.session_state.pop(confirm_key, None)
+                                    st.success(f"Gebruiker {g['username']} verwijderd.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Verwijderen mislukt: {fout}")
+                        with col_nee:
+                            if st.button("Annuleren", key=f"nee_user_{g['id']}"):
+                                st.session_state.pop(confirm_key, None)
+                                st.rerun()
+                    else:
+                        if st.button("Verwijder gebruiker", key=f"del_user_{g['id']}"):
+                            st.session_state[confirm_key] = True
+                            st.rerun()
 
         st.divider()
         st.subheader("Nieuwe gebruiker toevoegen")
