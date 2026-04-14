@@ -1,8 +1,86 @@
-"""Bestelengine — percentage buffer, pack-rounding, party platters, ratio multipliers."""
+"""Bestelengine — percentage buffer, pack-rounding, party platters, ratio multipliers.
+
+V2 aanpassingen:
+- bereken_dagen_tot_levering(): berekent dagen tot volgende leverdag per leverancier
+- bereken_alle_adviezen(): verwachte_vraag schaalt nu met days_until_delivery
+- Buffer: altijd minimaal 15% van de totale vraag (harde ondergrens)
+"""
 from __future__ import annotations
 import math
+from datetime import date, timedelta
 import pandas as pd
 from data_loader import FRIES_SKUS, DESSERT_SKUS, DRINKS_SKUS
+
+# Weekdag-kolom volgorde (0=ma, 1=di, ..., 6=zo)
+_LEVERDAGEN_KOLOMMEN = [
+    "levert_ma", "levert_di", "levert_wo",
+    "levert_do", "levert_vr", "levert_za", "levert_zo",
+]
+
+# Minimale buffer als percentage van de totale verwachte vraag (harde ondergrens)
+MIN_BUFFER_PCT = 0.15
+
+def bereken_dagen_tot_levering(
+    leverancier_naam: str,
+    vandaag: date,
+    leveranciers: dict[str, dict],
+) -> int:
+    """
+    Berekent het aantal dagen tot de eerstvolgende levering voor een leverancier.
+
+    Regels:
+    - Telling begint MORGEN (vandaag = leverdag telt niet mee)
+    - Als geen leverancier gevonden of geen leverdagen ingesteld → fallback 1 dag
+    - Zoekt maximaal 14 dagen vooruit
+
+    Voorbeeld:
+      Hanos levert di en do. Vandaag = ma → volgende levering = di = 1 dag.
+      Hanos levert di en do. Vandaag = di → volgende levering = do = 2 dagen.
+    """
+    supplier = leveranciers.get(leverancier_naam)
+    if not supplier:
+        return 1
+
+    leverdagen = [
+        i for i, kolom in enumerate(_LEVERDAGEN_KOLOMMEN)
+        if supplier.get(kolom, False)
+    ]
+    if not leverdagen:
+        return 1
+
+    for dag_offset in range(1, 15):
+        kandidaat = vandaag + timedelta(days=dag_offset)
+        if kandidaat.weekday() in leverdagen:
+            return dag_offset
+
+    return 1  # fallback als geen leverdag gevonden
+
+
+def volgende_leverdag_info(
+    leverancier_naam: str,
+    vandaag: date,
+    leveranciers: dict[str, dict],
+) -> dict:
+    """
+    Geeft een dict terug met info over de volgende levering, voor weergave in de UI.
+    Retourneert: {dagen: int, datum: date, weekdag_naam: str, te_laat_voor_bestel: bool}
+    """
+    WEEKDAGNAMEN_NL = ["maandag", "dinsdag", "woensdag", "donderdag",
+                       "vrijdag", "zaterdag", "zondag"]
+    supplier = leveranciers.get(leverancier_naam, {})
+    lead_time = supplier.get("lead_time_days", 1) if supplier else 1
+    dagen = bereken_dagen_tot_levering(leverancier_naam, vandaag, leveranciers)
+    leverdatum = vandaag + timedelta(days=dagen)
+    # Te laat voor bestellen als de levertijd groter of gelijk is aan de dagen tot levering
+    te_laat = lead_time >= dagen
+    return {
+        "dagen":           dagen,
+        "datum":           leverdatum,
+        "weekdag_naam":    WEEKDAGNAMEN_NL[leverdatum.weekday()],
+        "lead_time_days":  lead_time,
+        "te_laat":         te_laat,
+    }
+
 
 # Extra minisnack-vraag per party platter (stuks)
 PLATTER_25_EXTRA: dict[str, int] = {
@@ -24,22 +102,29 @@ def _afronden_op_pack(hoeveelheid: float, pack_qty: float) -> float:
 
 
 def genereer_reden(
-    sku_id:          str,
-    verwachte_vraag: float,
-    voorraad:        float,
-    buffer_qty:      float,
-    besteladvies:    float,
-    event_naam:      str,
-    fries_mult:      float,
-    desserts_mult:   float,
-    drinks_mult:     float,
-    platter_extra:   float,
+    sku_id:             str,
+    verwachte_vraag:    float,
+    voorraad:           float,
+    buffer_qty:         float,
+    besteladvies:       float,
+    event_naam:         str,
+    fries_mult:         float,
+    desserts_mult:      float,
+    drinks_mult:        float,
+    platter_extra:      float,
+    dagen_tot_levering: int = 1,
 ) -> str:
     if besteladvies == 0:
-        return f"Voorraad {voorraad:.1f} volstaat (vraag {verwachte_vraag:.1f} + buffer {buffer_qty:.1f})"
+        return (
+            f"Voorraad {voorraad:.1f} volstaat "
+            f"(vraag {verwachte_vraag:.1f} over {dagen_tot_levering}d + buffer {buffer_qty:.1f})"
+        )
 
     tekort = verwachte_vraag + buffer_qty - voorraad
-    reden  = f"Vraag {verwachte_vraag:.1f} + buffer {buffer_qty:.1f} − stock {voorraad:.1f} = {tekort:.1f} tekort"
+    reden  = (
+        f"Vraag {dagen_tot_levering}d: {verwachte_vraag:.1f} "
+        f"+ buffer {buffer_qty:.1f} − stock {voorraad:.1f} = {tekort:.1f} tekort"
+    )
 
     toevoegingen = []
     if sku_id in FRIES_SKUS and fries_mult > 1.0:
@@ -68,9 +153,34 @@ def bereken_alle_adviezen(
     platters_25:     int   = 0,
     platters_50:     int   = 0,
     manager_overrides: dict[str, float] | None = None,
+    leveranciers:    dict[str, dict] | None = None,
+    vandaag:         date | None = None,
 ) -> pd.DataFrame:
+    """
+    Berekent besteladvies voor alle producten.
+
+    V2 formule (met leveranciers/vandaag):
+      verwachte_vraag = vraag_per_cover × forecast_covers × days_until_delivery
+      buffer_qty      = verwachte_vraag × max(buffer_pct, MIN_BUFFER_PCT)
+      besteladvies    = max(0, verwachte_vraag + buffer_qty + platter_extra - voorraad)
+                        → afgerond op verpakkingseenheid
+
+    V1 formule (leveranciers=None of vandaag=None → fallback, days=1):
+      Gedrag identiek aan vroeger — backward compatible.
+    """
     if manager_overrides is None:
         manager_overrides = {}
+    if leveranciers is None:
+        leveranciers = {}
+    if vandaag is None:
+        vandaag = date.today()
+
+    # Pre-bereken dagen per leverancier voor efficiency
+    unieke_leveranciers = df_producten["leverancier"].unique()
+    dagen_per_lev: dict[str, int] = {
+        lev: bereken_dagen_tot_levering(lev, vandaag, leveranciers)
+        for lev in unieke_leveranciers
+    }
 
     df = df_producten.merge(
         df_stock[["product_id", "hoeveelheid"]].rename(columns={"hoeveelheid": "voorraad"}),
@@ -78,9 +188,13 @@ def bereken_alle_adviezen(
     ).copy()
     df["voorraad"] = df["voorraad"].fillna(0.0)
 
+    # Voeg dagen_tot_levering toe als kolom voor gebruik in berekening en reden
+    df["dagen_tot_levering"] = df["leverancier"].map(dagen_per_lev).fillna(1).astype(int)
+
     def vraag(row: pd.Series) -> float:
-        sku = row["id"]
-        base = row["vraag_per_cover"] * forecast_covers
+        sku   = row["id"]
+        dagen = int(row["dagen_tot_levering"])
+        base  = row["vraag_per_cover"] * forecast_covers * dagen
         if sku in FRIES_SKUS:
             base *= fries_mult
         if sku in DESSERT_SKUS:
@@ -96,8 +210,15 @@ def bereken_alle_adviezen(
 
     df["verwachte_vraag"] = df.apply(vraag, axis=1)
     df["platter_extra"]   = df.apply(platter_extra, axis=1)
-    df["buffer_qty"]      = (df["verwachte_vraag"] * df["buffer_pct"]).round(3)
-    df["bruto_behoefte"]  = df["verwachte_vraag"] + df["buffer_qty"] + df["platter_extra"] - df["voorraad"]
+
+    # Buffer: minimaal MIN_BUFFER_PCT (15%) van de totale vraag, harde ondergrens
+    df["buffer_qty"] = df.apply(
+        lambda r: round(r["verwachte_vraag"] * max(r["buffer_pct"], MIN_BUFFER_PCT), 3),
+        axis=1,
+    )
+    df["bruto_behoefte"] = (
+        df["verwachte_vraag"] + df["buffer_qty"] + df["platter_extra"] - df["voorraad"]
+    )
 
     def advies(row: pd.Series) -> float:
         sku = row["id"]
@@ -113,14 +234,15 @@ def bereken_alle_adviezen(
         lambda r: genereer_reden(
             r["id"], r["verwachte_vraag"], r["voorraad"],
             r["buffer_qty"], r["besteladvies"],
-            event_naam, fries_mult, desserts_mult, drinks_mult, r["platter_extra"],
+            event_naam, fries_mult, desserts_mult, drinks_mult,
+            r["platter_extra"], int(r["dagen_tot_levering"]),
         ),
         axis=1,
     )
 
     kolommen = ["id", "naam", "leverancier", "eenheid",
                 "voorraad", "verwachte_vraag", "buffer_qty",
-                "platter_extra", "besteladvies", "reden"]
+                "platter_extra", "dagen_tot_levering", "besteladvies", "reden"]
     return df[kolommen].reset_index(drop=True)
 
 

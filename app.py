@@ -22,21 +22,54 @@ st.set_page_config(
 )
 
 # ── Pagina-namen ───────────────────────────────────────────────────────────
-PAGE_CLOSING     = "Dag afsluiten"
-PAGE_FORECAST    = "Forecast"
-PAGE_REVIEW      = "Bestelreview"
-PAGE_EXPORT      = "Export"
-PAGE_INVENTARIS  = "Inventaris"
-PAGE_PRODUCTEN   = "Producten & Leveranciers"
-PAGE_LEERRAPPORT = "Leerrapport"
-PAGE_ADMIN       = "Beheer"
+PAGE_CLOSING      = "Dag afsluiten"
+PAGE_FORECAST     = "Forecast"
+PAGE_REVIEW       = "Bestelreview"
+PAGE_EXPORT       = "Export"
+PAGE_INVENTARIS   = "Inventaris"
+PAGE_PRODUCTEN    = "Producten & Leveranciers"
+PAGE_LEERRAPPORT  = "Leerrapport"
+PAGE_INSTELLINGEN = "Instellingen"   # Voor manager en admin: leveranciers + gebruikers
+PAGE_ADMIN        = "Beheer"         # Alleen admin: cross-tenant management
 
 WEEKDAGEN        = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 CONFIDENCE_LABEL = {"hoog": "Hoog", "gemiddeld": "Gemiddeld", "laag": "Laag"}
 
-PAGINAS       = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT,
-                 PAGE_INVENTARIS, PAGE_PRODUCTEN, PAGE_LEERRAPPORT]
-PAGINAS_ADMIN = PAGINAS + [PAGE_ADMIN]
+# Pagina's per rol
+_PAGINAS_BASIS  = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT,
+                   PAGE_INVENTARIS, PAGE_PRODUCTEN, PAGE_LEERRAPPORT]
+PAGINAS         = _PAGINAS_BASIS                                       # gebruiker (read-only)
+PAGINAS_MANAGER = _PAGINAS_BASIS + [PAGE_INSTELLINGEN]                 # manager
+PAGINAS_ADMIN   = _PAGINAS_BASIS + [PAGE_INSTELLINGEN, PAGE_ADMIN]     # admin
+
+
+def _nav_paginas() -> list[str]:
+    """Geeft de navigatielijst terug op basis van de rol van de ingelogde gebruiker."""
+    rol = st.session_state.get("user_rol", "user")
+    if rol == "admin":
+        return PAGINAS_ADMIN
+    if rol == "manager":
+        return PAGINAS_MANAGER
+    return PAGINAS
+
+
+def _heeft_recht(recht: str) -> bool:
+    """True als de ingelogde gebruiker het opgegeven recht heeft.
+
+    Admin en manager hebben altijd alle rechten.
+    Gebruiker (rol='user') heeft rechten op basis van zijn permissions dict.
+
+    Beschikbare rechten:
+      voorraad_wijzigen  — voorraad handmatig aanpassen
+      orders_versturen   — bestellingen goedkeuren en versturen
+      acties             — acties/campagnes aanmaken
+      recepten_beheren   — recepten toevoegen en wijzigen
+    """
+    rol = st.session_state.get("user_rol", "user")
+    if rol in ("admin", "manager"):
+        return True
+    perms = st.session_state.get("user_permissions", {})
+    return bool(perms.get(recht, False))
 
 
 # ── Minimal design system ──────────────────────────────────────────────────
@@ -211,6 +244,16 @@ def get_leverancier_config(tenant_id: str) -> dict:
     return db.laad_leverancier_config(tenant_id)
 
 @st.cache_data
+def get_leveranciers_dict(tenant_id: str) -> dict[str, dict]:
+    """Gecachte leveranciersdata voor gebruik in de bestelberekening."""
+    return db.laad_leveranciers_dict(tenant_id)
+
+@st.cache_data
+def get_leveranciers_lijst(tenant_id: str) -> list[dict]:
+    """Gecachte leverancierslijst voor gebruik in de UI."""
+    return db.laad_leveranciers(tenant_id)
+
+@st.cache_data
 def get_reservations() -> pd.DataFrame:
     return dl.load_reservations()
 
@@ -218,17 +261,18 @@ def get_reservations() -> pd.DataFrame:
 # ── Session state ──────────────────────────────────────────────────────────
 def init_state() -> None:
     for key, val in {
-        "ingelogd":        False,
-        "tenant_id":       None,
-        "tenant_naam":     None,
-        "user_naam":       None,
-        "user_rol":        None,
-        "closing_data":    None,
-        "forecast_result": None,
-        "advies_df":       None,
-        "approved_orders": None,
-        "pagina":          PAGE_CLOSING,
-        "_prev_pagina":    None,
+        "ingelogd":          False,
+        "tenant_id":         None,
+        "tenant_naam":       None,
+        "user_naam":         None,
+        "user_rol":          None,
+        "user_permissions":  {},    # Granulaire rechten voor de 'user' rol
+        "closing_data":      None,
+        "forecast_result":   None,
+        "advies_df":         None,
+        "approved_orders":   None,
+        "pagina":            PAGE_CLOSING,
+        "_prev_pagina":      None,
     }.items():
         if key not in st.session_state:
             st.session_state[key] = val
@@ -280,11 +324,12 @@ def page_login() -> None:
         if inloggen:
             user = db.verificeer_gebruiker(gebruiker, wachtwoord)
             if user:
-                st.session_state.ingelogd    = True
-                st.session_state.tenant_id   = user["tenant_id"]
-                st.session_state.tenant_naam = user["tenant_naam"]
-                st.session_state.user_naam   = user["username"]
-                st.session_state.user_rol    = user["role"]
+                st.session_state.ingelogd           = True
+                st.session_state.tenant_id          = user["tenant_id"]
+                st.session_state.tenant_naam        = user["tenant_naam"]
+                st.session_state.user_naam          = user["username"]
+                st.session_state.user_rol           = user["role"]
+                st.session_state.user_permissions   = user.get("permissions", {})
                 st.rerun()
             else:
                 st.error("Gebruikersnaam of wachtwoord klopt niet.")
@@ -483,6 +528,7 @@ def page_closing() -> None:
             columns={"id": "product_id", "voorraad": "hoeveelheid"}
         ).copy()
 
+        leveranciers_data = get_leveranciers_dict(tenant_id)
         advies_df = rc.bereken_alle_adviezen(
             df_producten    = df_producten,
             forecast_covers = result["forecast_covers"],
@@ -493,6 +539,8 @@ def page_closing() -> None:
             drinks_mult     = result["drinks_factor"],
             platters_25     = platters25_int,
             platters_50     = platters50_int,
+            leveranciers    = leveranciers_data,
+            vandaag         = datum_vandaag,
         )
 
         dl.sla_dag_op(tenant_id, datum_vandaag, covers_int, omzet_float,
@@ -567,6 +615,30 @@ def page_forecast() -> None:
         else:
             st.info(bericht)
 
+    # ── Leveringsschema ───────────────────────────────────────────────────
+    tenant_id_fc = st.session_state.tenant_id
+    leveranciers_data = get_leveranciers_dict(tenant_id_fc)
+    if leveranciers_data:
+        datum_vandaag_fc = r["datum_morgen"] - timedelta(days=1)
+        st.divider()
+        st.subheader("Volgende leveringen")
+        lev_cols = st.columns(len(leveranciers_data))
+        for idx, (lev_naam, lev_data) in enumerate(sorted(leveranciers_data.items())):
+            info = rc.volgende_leverdag_info(lev_naam, datum_vandaag_fc, leveranciers_data)
+            dag_nl   = info["weekdag_naam"].capitalize()
+            datum_nl = info["datum"].strftime("%d %b")
+            label    = f"**{lev_naam}**"
+            waarde   = f"{dag_nl} {datum_nl}"
+            delta    = f"over {info['dagen']} dag{'en' if info['dagen'] != 1 else ''}"
+            with lev_cols[idx]:
+                st.metric(label, waarde, delta=delta)
+                if info["te_laat"]:
+                    st.warning(
+                        f"Bestel vandaag! Levertijd {info['lead_time_days']}d — "
+                        f"anders te laat voor {dag_nl}.",
+                        icon="⚠️",
+                    )
+
     st.divider()
     st.subheader("Berekening")
     for driver in r["drivers"]:
@@ -626,18 +698,20 @@ def page_review() -> None:
     st.divider()
 
     weergave = advies_df.rename(columns={
-        "id":              "SKU",
-        "naam":            "Artikel",
-        "leverancier":     "Leverancier",
-        "eenheid":         "Eenheid",
-        "voorraad":        "Voorraad",
-        "verwachte_vraag": "Verwachte vraag",
-        "buffer_qty":      "Buffer",
-        "platter_extra":   "Party extra",
-        "besteladvies":    "Bestellen",
-        "reden":           "Reden",
+        "id":                 "SKU",
+        "naam":               "Artikel",
+        "leverancier":        "Leverancier",
+        "eenheid":            "Eenheid",
+        "voorraad":           "Voorraad",
+        "verwachte_vraag":    "Verwachte vraag",
+        "buffer_qty":         "Buffer",
+        "platter_extra":      "Party extra",
+        "dagen_tot_levering": "Dagen",
+        "besteladvies":       "Bestellen",
+        "reden":              "Reden",
     })
 
+    kan_goedkeuren = _heeft_recht("orders_versturen")
     edited = st.data_editor(
         weergave.drop(columns=["SKU"]),
         column_config={
@@ -648,7 +722,12 @@ def page_review() -> None:
             "Verwachte vraag": st.column_config.NumberColumn(disabled=True, format="%.1f", width="small"),
             "Buffer":          st.column_config.NumberColumn(disabled=True, format="%.1f", width="small"),
             "Party extra":     st.column_config.NumberColumn(disabled=True, format="%.0f", width="small"),
-            "Bestellen":       st.column_config.NumberColumn(min_value=0.0, step=1.0, width="small"),
+            "Dagen":           st.column_config.NumberColumn(disabled=True, format="%d d", width="small",
+                                                             help="Aantal dagen tot eerstvolgende levering"),
+            "Bestellen":       st.column_config.NumberColumn(
+                                   min_value=0.0, step=1.0, width="small",
+                                   disabled=not kan_goedkeuren,
+                               ),
             "Reden":           st.column_config.TextColumn(disabled=True, width="large"),
         },
         hide_index=True,
@@ -663,12 +742,15 @@ def page_review() -> None:
             st.session_state.pagina = PAGE_FORECAST
             st.rerun()
     with col_b:
-        if st.button("Goedkeuren en exporteren", type="primary", use_container_width=True):
-            approved = advies_df.copy()
-            approved["besteladvies"] = edited["Bestellen"].values
-            st.session_state.approved_orders = approved
-            st.session_state.pagina = PAGE_EXPORT
-            st.rerun()
+        if kan_goedkeuren:
+            if st.button("Goedkeuren en exporteren", type="primary", use_container_width=True):
+                approved = advies_df.copy()
+                approved["besteladvies"] = edited["Bestellen"].values
+                st.session_state.approved_orders = approved
+                st.session_state.pagina = PAGE_EXPORT
+                st.rerun()
+        else:
+            st.info("Je hebt geen recht om bestellingen goed te keuren. Vraag de manager.")
 
 
 # ── Scherm 4 — Export ─────────────────────────────────────────────────────
@@ -829,6 +911,10 @@ def page_inventaris() -> None:
 
     st.divider()
     st.subheader("Voorraad corrigeren")
+
+    if not _heeft_recht("voorraad_wijzigen"):
+        st.info("Je hebt geen recht om de voorraad handmatig te wijzigen. Vraag de manager.")
+        return
 
     product_opties = dict(zip(df_producten["naam"], df_producten["id"]))
 
@@ -1223,6 +1309,281 @@ def _toon_log_tabel(tenant_id: str) -> None:
     st.dataframe(weergave, hide_index=True, use_container_width=True)
 
 
+# ── Scherm 8 — Instellingen (manager + admin) ─────────────────────────────
+def page_instellingen() -> None:
+    """Leveranciersbeheer + gebruikersbeheer voor de eigen tenant."""
+    tenant_id = st.session_state.tenant_id
+
+    if st.session_state.user_rol not in ("admin", "manager"):
+        st.error("Geen toegang.")
+        return
+
+    st.title("Instellingen")
+    st.caption(
+        "Beheer de leveranciers en medewerkers van jouw restaurant. "
+        "Stel leverdagen en e-mailadressen in per leverancier."
+    )
+
+    tab_lev, tab_gebr = st.tabs(["Leveranciers", "Gebruikers"])
+
+    # ── Tab 1: Leveranciers ──────────────────────────────────────────────
+    with tab_lev:
+        st.subheader("Leveranciers & leveringsschema")
+        st.caption(
+            "Vink aan op welke dag elke leverancier levert. "
+            "De besteltool gebruikt dit om automatisch voor het juiste aantal dagen te bestellen."
+        )
+
+        leveranciers = get_leveranciers_lijst(tenant_id)
+        DAGLETTERS   = ["Ma", "Di", "Wo", "Do", "Vr", "Za", "Zo"]
+        DAG_KOLOMMEN = ["levert_ma", "levert_di", "levert_wo", "levert_do",
+                        "levert_vr", "levert_za", "levert_zo"]
+
+        if not leveranciers:
+            st.info("Nog geen leveranciers. Voeg ze toe via het formulier hieronder.")
+        else:
+            for lev in leveranciers:
+                leverdagen_str = " · ".join(
+                    DAGLETTERS[i]
+                    for i, k in enumerate(DAG_KOLOMMEN)
+                    if lev.get(k, False)
+                ) or "geen leverdagen"
+                email_badge = lev.get("email") or "geen e-mail"
+
+                with st.expander(
+                    f"**{lev['name']}** — {leverdagen_str} — {email_badge}",
+                    expanded=False,
+                ):
+                    with st.form(f"form_lev_edit_{lev['id']}"):
+                        c1, c2 = st.columns([2, 1])
+                        with c1:
+                            naam_in   = st.text_input("Naam leverancier", value=lev["name"])
+                            email_in  = st.text_input("E-mailadres", value=lev.get("email", ""),
+                                                      placeholder="inkoop@leverancier.nl")
+                            aanhef_in = st.text_input("Aanhef in e-mail", value=lev.get("aanhef", "Beste leverancier,"))
+                        with c2:
+                            lt_in = st.number_input(
+                                "Levertijd (dagen)",
+                                min_value=1, max_value=14,
+                                value=int(lev.get("lead_time_days", 1)),
+                                help="Hoeveel dagen duurt het van bestelling tot levering?",
+                            )
+
+                        st.markdown("**Leverdagen** — vink aan op welke dagen deze leverancier levert:")
+                        dag_cols = st.columns(7)
+                        levert_waarden = []
+                        for i, (dagletter, dagkolom) in enumerate(zip(DAGLETTERS, DAG_KOLOMMEN)):
+                            levert_waarden.append(
+                                dag_cols[i].checkbox(dagletter, value=bool(lev.get(dagkolom, False)),
+                                                     key=f"lev_{lev['id']}_{dagkolom}")
+                            )
+
+                        col_save, col_del = st.columns([3, 1])
+                        with col_save:
+                            opslaan = st.form_submit_button("Opslaan", type="primary", use_container_width=True)
+                        with col_del:
+                            verwijder = st.form_submit_button("Verwijder", use_container_width=True)
+
+                    if opslaan:
+                        ok, fout = db.update_leverancier(
+                            lev["id"], naam_in, email_in, aanhef_in, lt_in,
+                            *levert_waarden
+                        )
+                        if ok:
+                            st.success(f"**{naam_in}** opgeslagen.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"Opslaan mislukt: {fout}")
+
+                    if verwijder:
+                        ok, fout = db.verwijder_leverancier(lev["id"])
+                        if ok:
+                            st.success(f"**{lev['name']}** verwijderd.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"Verwijderen mislukt: {fout}")
+
+        st.divider()
+        with st.expander("➕ Nieuwe leverancier toevoegen", expanded=not leveranciers):
+            with st.form("form_nieuwe_leverancier", clear_on_submit=True):
+                c1, c2 = st.columns([2, 1])
+                with c1:
+                    nieuw_naam   = st.text_input("Naam leverancier *", placeholder="bijv. Sligro")
+                    nieuw_email  = st.text_input("E-mailadres", placeholder="inkoop@sligro.nl")
+                    nieuw_aanhef = st.text_input("Aanhef", value="Beste leverancier,")
+                with c2:
+                    nieuw_lt = st.number_input("Levertijd (dagen)", min_value=1, max_value=14, value=1)
+
+                st.markdown("**Leverdagen:**")
+                nd_cols = st.columns(7)
+                nieuwe_dagen = [
+                    nd_cols[i].checkbox(DAGLETTERS[i], key=f"nieuw_dag_{i}")
+                    for i in range(7)
+                ]
+
+                if st.form_submit_button("Leverancier aanmaken", type="primary"):
+                    if not nieuw_naam.strip():
+                        st.error("Naam is verplicht.")
+                    elif not any(nieuwe_dagen):
+                        st.error("Selecteer minimaal 1 leverdag.")
+                    else:
+                        ok, fout = db.maak_leverancier_aan(
+                            tenant_id, nieuw_naam, nieuw_email, nieuw_aanhef, nieuw_lt,
+                            *nieuwe_dagen
+                        )
+                        if ok:
+                            st.success(f"Leverancier **{nieuw_naam}** aangemaakt.")
+                            st.cache_data.clear()
+                            st.rerun()
+                        else:
+                            st.error(f"Aanmaken mislukt: {fout}")
+
+    # ── Tab 2: Gebruikers ────────────────────────────────────────────────
+    with tab_gebr:
+        st.subheader("Medewerkers")
+        st.caption(
+            "Maak medewerkers aan met rol 'Medewerker'. "
+            "Je kunt per medewerker aangeven wat ze mogen doen."
+        )
+
+        RECHTEN_LABELS = {
+            "voorraad_wijzigen": "Voorraad handmatig wijzigen",
+            "orders_versturen":  "Bestellingen goedkeuren & versturen",
+            "acties":            "Acties / campagnes aanmaken",
+            "recepten_beheren":  "Recepten beheren",
+        }
+
+        # Haal alle gebruikers van deze tenant op
+        alle_gebruikers = db.laad_alle_gebruikers()
+        tenant_gebruikers = [g for g in alle_gebruikers if g["tenant_id"] == tenant_id]
+        ingelogde_user = st.session_state.get("user_naam", "")
+
+        # Managers mogen alleen 'user' rol aanmaken (geen admin)
+        is_admin = st.session_state.user_rol == "admin"
+
+        if not tenant_gebruikers:
+            st.info("Nog geen medewerkers aangemaakt.")
+        else:
+            for g in tenant_gebruikers:
+                if g["role"] == "admin" and not is_admin:
+                    continue  # managers zien geen admin accounts
+                rol_label = {"admin": "Admin", "manager": "Manager", "user": "Medewerker"}.get(g["role"], g["role"])
+                with st.expander(f"**{g['username']}** · {g.get('full_name', '')} · {rol_label}"):
+                    with st.form(f"form_gebr_edit_{g['id']}"):
+                        c1, c2 = st.columns(2)
+                        with c1:
+                            nieuwe_uname = st.text_input("Gebruikersnaam", value=g["username"])
+                            nieuwe_fnaam = st.text_input("Volledige naam", value=g.get("full_name", ""))
+                        with c2:
+                            nieuw_pw = st.text_input("Nieuw wachtwoord", type="password",
+                                                     placeholder="Laat leeg om niet te wijzigen")
+                            rol_opties = (["user", "manager", "admin"] if is_admin
+                                          else ["user", "manager"])
+                            rol_idx    = rol_opties.index(g["role"]) if g["role"] in rol_opties else 0
+                            nieuwe_rol = st.selectbox("Rol", rol_opties,
+                                                      format_func=lambda r: {"admin": "Admin",
+                                                                              "manager": "Manager",
+                                                                              "user": "Medewerker"}[r],
+                                                      index=rol_idx)
+
+                        # Permissies tonen alleen voor 'user' rol
+                        if g["role"] == "user":
+                            st.markdown("**Rechten voor deze medewerker:**")
+                            huidige_rechten = g.get("permissions") or {}
+                            perm_cols = st.columns(2)
+                            nieuwe_rechten = {}
+                            for pi, (perm_key, perm_label) in enumerate(RECHTEN_LABELS.items()):
+                                col = perm_cols[pi % 2]
+                                nieuwe_rechten[perm_key] = col.checkbox(
+                                    perm_label,
+                                    value=bool(huidige_rechten.get(perm_key, False)),
+                                    key=f"perm_{g['id']}_{perm_key}",
+                                )
+                        else:
+                            nieuwe_rechten = None  # admin/manager hebben altijd alle rechten
+
+                        if st.form_submit_button("Opslaan", type="primary"):
+                            if not nieuwe_uname.strip():
+                                st.error("Gebruikersnaam mag niet leeg zijn.")
+                            else:
+                                ok, fout = db.update_gebruiker(
+                                    g["id"], nieuwe_uname.strip(),
+                                    nieuwe_fnaam.strip(), nieuwe_rol,
+                                    nieuw_pw or None,
+                                )
+                                if ok and nieuwe_rechten is not None:
+                                    db.update_gebruiker_rechten(g["id"], nieuwe_rechten)
+                                if ok:
+                                    st.success("Gegevens bijgewerkt.")
+                                    st.rerun()
+                                else:
+                                    st.error(f"Opslaan mislukt: {fout}")
+
+                    if g["username"] != ingelogde_user:
+                        confirm_key = f"confirm_del_gebr_{g['id']}"
+                        if st.session_state.get(confirm_key):
+                            st.warning(f"Verwijder **{g['username']}**?")
+                            col_ja, col_nee = st.columns(2)
+                            with col_ja:
+                                if st.button("Ja, verwijder", key=f"ja_g_{g['id']}", type="primary"):
+                                    ok, _ = db.verwijder_gebruiker(g["id"])
+                                    if ok:
+                                        st.session_state.pop(confirm_key, None)
+                                        st.success(f"{g['username']} verwijderd.")
+                                        st.rerun()
+                            with col_nee:
+                                if st.button("Annuleren", key=f"nee_g_{g['id']}"):
+                                    st.session_state.pop(confirm_key, None)
+                                    st.rerun()
+                        else:
+                            if st.button("Verwijder medewerker", key=f"del_g_{g['id']}"):
+                                st.session_state[confirm_key] = True
+                                st.rerun()
+
+        st.divider()
+        st.subheader("Nieuwe medewerker toevoegen")
+        with st.form("form_nieuw_gebr_inst", clear_on_submit=True):
+            c1, c2 = st.columns(2)
+            with c1:
+                nw_uname = st.text_input("Gebruikersnaam *")
+                nw_fnaam = st.text_input("Volledige naam")
+            with c2:
+                nw_pw  = st.text_input("Wachtwoord *", type="password")
+                nw_rol = st.selectbox(
+                    "Rol",
+                    ["user", "manager"] if not is_admin else ["user", "manager", "admin"],
+                    format_func=lambda r: {"admin": "Admin",
+                                           "manager": "Manager",
+                                           "user": "Medewerker"}[r],
+                )
+
+            # Permissies voor nieuwe medewerker (standaard alles uit)
+            st.markdown("**Rechten (alleen van toepassing bij rol Medewerker):**")
+            perm_cols_nw = st.columns(2)
+            nw_rechten = {}
+            for pi, (perm_key, perm_label) in enumerate(RECHTEN_LABELS.items()):
+                nw_rechten[perm_key] = perm_cols_nw[pi % 2].checkbox(
+                    perm_label, value=False, key=f"nw_perm_{perm_key}"
+                )
+
+            if st.form_submit_button("Medewerker aanmaken", type="primary"):
+                if not nw_uname.strip() or not nw_pw:
+                    st.error("Gebruikersnaam en wachtwoord zijn verplicht.")
+                else:
+                    rechten = nw_rechten if nw_rol == "user" else {}
+                    gelukt = db.maak_gebruiker_aan(
+                        tenant_id, nw_uname.strip(), nw_pw,
+                        nw_rol, nw_fnaam.strip(), rechten,
+                    )
+                    if gelukt:
+                        st.success(f"Medewerker **{nw_uname.strip()}** aangemaakt.")
+                        st.rerun()
+                    else:
+                        st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
+
+
 # ── Admin ─────────────────────────────────────────────────────────────────
 def page_admin() -> None:
     if st.session_state.user_rol != "admin":
@@ -1383,7 +1744,10 @@ def page_admin() -> None:
                     volledige_naam = st.text_input("Volledige naam")
                 with col2:
                     wachtwoord = st.text_input("Wachtwoord", type="password")
-                    rol = st.selectbox("Rol", ["manager", "admin"])
+                    rol = st.selectbox("Rol", ["user", "manager", "admin"],
+                                      format_func=lambda r: {"admin": "Admin",
+                                                              "manager": "Manager",
+                                                              "user": "Medewerker"}[r])
 
                 if st.form_submit_button("Gebruiker aanmaken"):
                     if not gebruikersnaam or not wachtwoord:
@@ -1498,7 +1862,7 @@ def main() -> None:
         )
         st.divider()
 
-        nav_opties  = PAGINAS_ADMIN if st.session_state.user_rol == "admin" else PAGINAS
+        nav_opties  = _nav_paginas()
         _pagina_idx = nav_opties.index(st.session_state.pagina) if st.session_state.pagina in nav_opties else 0
         pagina = st.radio(
             "Navigatie",
@@ -1552,6 +1916,8 @@ def main() -> None:
         page_inventaris()
     elif scherm == PAGE_PRODUCTEN:
         page_producten()
+    elif scherm == PAGE_INSTELLINGEN:
+        page_instellingen()
     elif scherm == PAGE_ADMIN:
         page_admin()
     else:

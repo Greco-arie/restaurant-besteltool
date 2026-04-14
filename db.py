@@ -57,21 +57,23 @@ def laad_alle_gebruikers() -> list[dict]:
 
 
 def maak_gebruiker_aan(
-    tenant_id: str,
-    username:  str,
-    password:  str,
-    role:      str,
-    full_name: str,
+    tenant_id:   str,
+    username:    str,
+    password:    str,
+    role:        str,
+    full_name:   str,
+    permissions: dict | None = None,
 ) -> bool:
     """Maak een nieuwe gebruiker aan. True als gelukt."""
     try:
         get_client().table("tenant_users").insert({
-            "tenant_id": tenant_id,
-            "username":  username,
-            "password":  password,
-            "role":      role,
-            "full_name": full_name,
-            "is_active": True,
+            "tenant_id":   tenant_id,
+            "username":    username,
+            "password":    password,
+            "role":        role,
+            "full_name":   full_name,
+            "is_active":   True,
+            "permissions": permissions or {},
         }).execute()
         return True
     except Exception:
@@ -168,7 +170,7 @@ def update_tenant(tenant_id: str, name: str) -> tuple[bool, str]:
 def verificeer_gebruiker(username: str, password: str) -> dict | None:
     """
     Verifieer inloggegevens tegen de tenant_users tabel.
-    Geeft dict terug met tenant_id, tenant_naam, username, role — of None als mislukt.
+    Geeft dict terug met tenant_id, tenant_naam, username, role, permissions — of None als mislukt.
     """
     try:
         resp = (
@@ -189,7 +191,123 @@ def verificeer_gebruiker(username: str, password: str) -> dict | None:
                 "username":    user["username"],
                 "role":        user["role"],
                 "full_name":   user.get("full_name", user["username"]),
+                "permissions": user.get("permissions") or {},
             }
     except Exception:
         pass
     return None
+
+
+# ── Leveranciers ───────────────────────────────────────────────────────────
+
+def laad_leveranciers(tenant_id: str) -> list[dict]:
+    """Geeft alle actieve leveranciers voor de tenant als lijst."""
+    try:
+        resp = (
+            get_client()
+            .table("suppliers")
+            .select("*")
+            .eq("tenant_id", tenant_id)
+            .eq("is_active", True)
+            .order("name")
+            .execute()
+        )
+        return resp.data or []
+    except Exception:
+        return []
+
+
+def laad_leveranciers_dict(tenant_id: str) -> dict[str, dict]:
+    """Geeft leveranciers als dict: naam → data, voor snelle lookup in berekeningen."""
+    return {lev["name"]: lev for lev in laad_leveranciers(tenant_id)}
+
+
+def maak_leverancier_aan(
+    tenant_id:      str,
+    name:           str,
+    email:          str,
+    aanhef:         str,
+    lead_time_days: int,
+    levert_ma: bool, levert_di: bool, levert_wo: bool, levert_do: bool,
+    levert_vr: bool, levert_za: bool, levert_zo: bool,
+) -> tuple[bool, str]:
+    """Maak een nieuwe leverancier aan. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("suppliers").insert({
+            "tenant_id":      tenant_id,
+            "name":           name.strip(),
+            "email":          email.strip(),
+            "aanhef":         aanhef.strip(),
+            "lead_time_days": lead_time_days,
+            "levert_ma": levert_ma, "levert_di": levert_di, "levert_wo": levert_wo,
+            "levert_do": levert_do, "levert_vr": levert_vr, "levert_za": levert_za,
+            "levert_zo": levert_zo,
+            "is_active": True,
+        }).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def update_leverancier(
+    supplier_id:    str,
+    name:           str,
+    email:          str,
+    aanhef:         str,
+    lead_time_days: int,
+    levert_ma: bool, levert_di: bool, levert_wo: bool, levert_do: bool,
+    levert_vr: bool, levert_za: bool, levert_zo: bool,
+) -> tuple[bool, str]:
+    """Pas een leverancier aan. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("suppliers").update({
+            "name":           name.strip(),
+            "email":          email.strip(),
+            "aanhef":         aanhef.strip(),
+            "lead_time_days": lead_time_days,
+            "levert_ma": levert_ma, "levert_di": levert_di, "levert_wo": levert_wo,
+            "levert_do": levert_do, "levert_vr": levert_vr, "levert_za": levert_za,
+            "levert_zo": levert_zo,
+        }).eq("id", supplier_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+def verwijder_leverancier(supplier_id: str) -> tuple[bool, str]:
+    """Verwijder een leverancier (soft delete: zet is_active op False)."""
+    try:
+        get_client().table("suppliers").update({"is_active": False}).eq("id", supplier_id).execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+# ── Gebruikersrechten ──────────────────────────────────────────────────────
+
+def laad_gebruiker_rechten(user_id: str) -> dict:
+    """Geeft de granulaire rechten van een gebruiker terug als dict."""
+    try:
+        resp = (
+            get_client()
+            .table("tenant_users")
+            .select("permissions")
+            .eq("id", user_id)
+            .execute()
+        )
+        if resp.data:
+            return resp.data[0].get("permissions") or {}
+    except Exception:
+        pass
+    return {}
+
+
+def update_gebruiker_rechten(user_id: str, rechten: dict) -> bool:
+    """Sla granulaire rechten op voor een gebruiker. True als gelukt."""
+    try:
+        get_client().table("tenant_users").update(
+            {"permissions": rechten}
+        ).eq("id", user_id).execute()
+        return True
+    except Exception:
+        return False
