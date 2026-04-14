@@ -697,6 +697,33 @@ def page_review() -> None:
 
     st.divider()
 
+    # ── Verspilling- en tekortsignalen ────────────────────────────────────
+    signalen = inv.laad_verspilling_signalen(tenant_id)
+    if signalen:
+        sku_naar_naam = dict(zip(advies_df["id"], advies_df["naam"]))
+        buffer_map    = dict(zip(advies_df["id"], advies_df["buffer_pct"]))
+
+        with st.container():
+            st.markdown("**Attentiepunten uit de voorraadhistorie (30 dagen)**")
+            for sku, counts in signalen.items():
+                naam        = sku_naar_naam.get(sku, sku)
+                buffer_huidig = int(round(buffer_map.get(sku, 0) * 100))
+                if counts["marge_te_hoog"] >= 3:
+                    n = counts["marge_te_hoog"]
+                    buffer_voorstel = max(5, buffer_huidig - 5)
+                    st.warning(
+                        f"**{naam}** — {n}× verlopen of weggegooid in 30 dagen. "
+                        f"Huidige marge: {buffer_huidig}%. Overweeg te verlagen naar {buffer_voorstel}%."
+                    )
+                if counts["marge_te_laag"] >= 3:
+                    n = counts["marge_te_laag"]
+                    buffer_voorstel = buffer_huidig + 5
+                    st.error(
+                        f"**{naam}** — {n}× sneller op dan verwacht in 30 dagen. "
+                        f"Huidige marge: {buffer_huidig}%. Bestel vaker of verhoog naar {buffer_voorstel}%."
+                    )
+        st.divider()
+
     weergave = advies_df.rename(columns={
         "id":                 "SKU",
         "naam":               "Artikel",
@@ -937,11 +964,19 @@ def page_inventaris() -> None:
         col3, col4 = st.columns(2)
         with col3:
             reden = st.selectbox("Reden", [
-                "Telling gecorrigeerd",
-                "Verspilling / afval",
-                "Levering niet ingeboekt",
-                "Personeelsmaaltijd / intern gebruik",
-                "Portionering afwijking",
+                # ── Voorraad daalt ──────────────────────────────────────
+                "Verspilling — verlopen / over datum",
+                "Verspilling — beschadigd / gemorst",
+                "Intern gebruik — personeelsmaaltijd",
+                "Intern gebruik — proefgerecht / tasting",
+                "Portionering — groter dan recept",
+                "Sneller op dan verwacht",
+                "Telling gecorrigeerd — was te hoog",
+                # ── Voorraad stijgt ─────────────────────────────────────
+                "Levering ingeboekt — was vergeten",
+                "Retour van klant",
+                "Telling gecorrigeerd — was te laag",
+                # ── Overig ──────────────────────────────────────────────
                 "Overig",
             ])
         with col4:

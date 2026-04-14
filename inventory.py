@@ -15,9 +15,21 @@ Inventaris tab:
   Manager corrigeert live voorraad → sla_handmatige_correctie_op()
 """
 from __future__ import annotations
-from datetime import date
+from datetime import date, timedelta
 import pandas as pd
 import db
+
+# ── Signaalredenen ────────────────────────────────────────────────────────
+# Redenen die wijzen op structurele verspilling (marge waarschijnlijk te hoog)
+REDENEN_MARGE_TE_HOOG: frozenset[str] = frozenset({
+    "Verspilling — verlopen / over datum",
+    "Verspilling — beschadigd / gemorst",
+})
+
+# Redenen die wijzen op te krappe bestelling (marge of bestelfrequentie te laag)
+REDENEN_MARGE_TE_LAAG: frozenset[str] = frozenset({
+    "Sneller op dan verwacht",
+})
 
 
 # ── Live voorraad ─────────────────────────────────────────────────────────
@@ -226,3 +238,55 @@ def laad_verbruik_analyse(tenant_id: str) -> pd.DataFrame:
         )
     except Exception:
         return pd.DataFrame()
+
+
+# ── Verspilling- en tekort-signalen ───────────────────────────────────────
+
+def laad_verspilling_signalen(
+    tenant_id: str,
+    dagen:     int = 30,
+    drempel:   int = 3,
+) -> dict[str, dict]:
+    """
+    Analyseer handmatige correcties van de afgelopen `dagen` dagen.
+
+    Geeft per SKU terug hoeveel keer een signaalreden voorkwam:
+      {"marge_te_hoog": int, "marge_te_laag": int}
+
+    Alleen SKUs met minstens één signaaltype >= drempel worden teruggegeven.
+
+    marge_te_hoog  → product wordt structureel weggegooid (verlopen/beschadigd)
+    marge_te_laag  → product raakt te snel op
+    """
+    cutoff = (date.today() - timedelta(days=dagen)).isoformat()
+    try:
+        resp = (
+            db.get_client()
+            .table("inventory_adjustments")
+            .select("sku_id, reason")
+            .eq("tenant_id", tenant_id)
+            .eq("adjustment_type", "manual_correction")
+            .gte("created_at", cutoff)
+            .execute()
+        )
+        if not resp.data:
+            return {}
+
+        tellers: dict[str, dict] = {}
+        for row in resp.data:
+            sku   = row["sku_id"]
+            reden = row.get("reason", "")
+            if sku not in tellers:
+                tellers[sku] = {"marge_te_hoog": 0, "marge_te_laag": 0}
+            if reden in REDENEN_MARGE_TE_HOOG:
+                tellers[sku]["marge_te_hoog"] += 1
+            elif reden in REDENEN_MARGE_TE_LAAG:
+                tellers[sku]["marge_te_laag"] += 1
+
+        return {
+            sku: counts
+            for sku, counts in tellers.items()
+            if counts["marge_te_hoog"] >= drempel or counts["marge_te_laag"] >= drempel
+        }
+    except Exception:
+        return {}
