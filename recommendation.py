@@ -3,7 +3,7 @@
 V2 aanpassingen:
 - bereken_dagen_tot_levering(): berekent dagen tot volgende leverdag per leverancier
 - bereken_alle_adviezen(): verwachte_vraag schaalt nu met days_until_delivery
-- Buffer: altijd minimaal 15% van de totale vraag (harde ondergrens)
+- Buffer: rechtstreeks uit buffer_pct per product (wizard bepaalt de waarde bij toevoegen)
 """
 from __future__ import annotations
 import math
@@ -16,9 +16,6 @@ _LEVERDAGEN_KOLOMMEN = [
     "levert_ma", "levert_di", "levert_wo",
     "levert_do", "levert_vr", "levert_za", "levert_zo",
 ]
-
-# Minimale buffer als percentage van de totale verwachte vraag (harde ondergrens)
-MIN_BUFFER_PCT = 0.15
 
 def bereken_dagen_tot_levering(
     leverancier_naam: str,
@@ -161,7 +158,7 @@ def bereken_alle_adviezen(
 
     V2 formule (met leveranciers/vandaag):
       verwachte_vraag = vraag_per_cover × forecast_covers × days_until_delivery
-      buffer_qty      = verwachte_vraag × max(buffer_pct, MIN_BUFFER_PCT)
+      buffer_qty      = verwachte_vraag × buffer_pct
       besteladvies    = max(0, verwachte_vraag + buffer_qty + platter_extra - voorraad)
                         → afgerond op verpakkingseenheid
 
@@ -211,9 +208,9 @@ def bereken_alle_adviezen(
     df["verwachte_vraag"] = df.apply(vraag, axis=1)
     df["platter_extra"]   = df.apply(platter_extra, axis=1)
 
-    # Buffer: minimaal MIN_BUFFER_PCT (15%) van de totale vraag, harde ondergrens
+    # Buffer: rechtstreeks buffer_pct per product — wizard bepaalt dit bij toevoegen
     df["buffer_qty"] = df.apply(
-        lambda r: round(r["verwachte_vraag"] * max(r["buffer_pct"], MIN_BUFFER_PCT), 3),
+        lambda r: round(r["verwachte_vraag"] * r["buffer_pct"], 3),
         axis=1,
     )
     df["bruto_behoefte"] = (
