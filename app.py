@@ -13,6 +13,9 @@ import learning
 import weather as wt
 import inventory as inv
 import db
+import permissions as perm
+import monitoring  # Sentry + structlog — moet als eerste na stdlib imports
+import email_service as mail
 
 st.set_page_config(
     page_title="Besteltool",
@@ -46,7 +49,7 @@ PAGINAS_ADMIN   = _PAGINAS_BASIS + [PAGE_INSTELLINGEN, PAGE_ADMIN]     # admin
 def _nav_paginas() -> list[str]:
     """Geeft de navigatielijst terug op basis van de rol van de ingelogde gebruiker."""
     rol = st.session_state.get("user_rol", "user")
-    if rol == "admin":
+    if rol in ("admin", "super_admin"):
         return PAGINAS_ADMIN
     if rol == "manager":
         return PAGINAS_MANAGER
@@ -54,22 +57,10 @@ def _nav_paginas() -> list[str]:
 
 
 def _heeft_recht(recht: str) -> bool:
-    """True als de ingelogde gebruiker het opgegeven recht heeft.
-
-    Admin en manager hebben altijd alle rechten.
-    Gebruiker (rol='user') heeft rechten op basis van zijn permissions dict.
-
-    Beschikbare rechten:
-      voorraad_wijzigen  — voorraad handmatig aanpassen
-      orders_versturen   — bestellingen goedkeuren en versturen
-      acties             — acties/campagnes aanmaken
-      recepten_beheren   — recepten toevoegen en wijzigen
-    """
-    rol = st.session_state.get("user_rol", "user")
-    if rol in ("admin", "manager"):
-        return True
+    """True als de ingelogde gebruiker het opgegeven recht heeft."""
+    rol   = st.session_state.get("user_rol", "user")
     perms = st.session_state.get("user_permissions", {})
-    return bool(perms.get(recht, False))
+    return perm.heeft_recht(recht, rol, perms)
 
 
 # ── Minimal design system ──────────────────────────────────────────────────
@@ -738,7 +729,7 @@ def page_review() -> None:
         "reden":              "Reden",
     })
 
-    kan_goedkeuren = _heeft_recht("orders_versturen")
+    kan_goedkeuren = _heeft_recht("bestellingen_plaatsen")
     edited = st.data_editor(
         weergave.drop(columns=["SKU"]),
         column_config={
@@ -828,37 +819,45 @@ def page_export() -> None:
         with st.expander(f"**{lev}** — {len(df_lev)} artikel(en)", expanded=True):
             st.dataframe(df_display, hide_index=True, use_container_width=True)
 
-            cfg   = dl.SUPPLIER_CONFIG.get(lev, {})
-            email = cfg.get("email", "")
-
             col_mail, col_csv = st.columns([3, 2])
             with col_mail:
-                cfg_lev = lev_config.get(lev) or dl.SUPPLIER_CONFIG.get(lev, {})
-                email   = cfg_lev.get("email", "")
-                if not email:
+                cfg_lev   = lev_config.get(lev) or dl.SUPPLIER_CONFIG.get(lev, {})
+                lev_email = cfg_lev.get("email", "")
+                if not lev_email:
                     st.warning(f"Geen e-mailadres voor {lev} — stel in via Beheer → Leveranciers")
                 else:
-                    mailto = dl.genereer_mailto(lev, df_lev, datum, config_override=cfg_lev)
-                    components.html(
-                        f"""<button
-                          data-mailto="{mailto}"
-                          onclick="(function(btn){{
-                            var a = window.parent.document.createElement('a');
-                            a.href = btn.getAttribute('data-mailto');
-                            a.style.display = 'none';
-                            window.parent.document.body.appendChild(a);
-                            a.click();
-                            setTimeout(function(){{ a.remove(); }}, 200);
-                          }})(this);"
-                          style="display:block;width:100%;padding:10px 16px;
-                                 background:#111827;color:#ffffff;border:none;
-                                 border-radius:6px;cursor:pointer;font-weight:500;
-                                 font-size:14px;font-family:sans-serif;box-sizing:border-box;">
-                          \U0001f4e7 Mail naar {lev} ({email})
-                        </button>""",
-                        height=52,
-                        scrolling=False,
-                    )
+                    send_key = f"send_{lev}"
+                    if st.button(
+                        f"\U0001f4e7 Mail naar {lev} ({lev_email})",
+                        key=send_key,
+                        use_container_width=True,
+                    ):
+                        manager_email = st.session_state.get("user_email") or None
+                        tenant_slug   = st.session_state.get("tenant_slug", "restaurant")
+                        with st.spinner(f"E-mail versturen naar {lev}..."):
+                            ok, resultaat = mail.verzend_bestelling(
+                                leverancier   = lev,
+                                df_lev        = df_lev,
+                                bestel_datum  = datum,
+                                lev_config    = cfg_lev,
+                                tenant_slug   = tenant_slug,
+                                manager_email = manager_email,
+                            )
+                        if ok:
+                            st.success(f"Bestelling verzonden naar {lev_email} (id: {resultaat})")
+                            monitoring.log_event(
+                                "bestelling_verzonden",
+                                leverancier=lev,
+                                to=lev_email,
+                                datum=datum,
+                            )
+                        else:
+                            st.error(f"Verzenden mislukt: {resultaat}")
+                            monitoring.log_error(
+                                "bestelling_verzend_fout",
+                                fout=resultaat,
+                                leverancier=lev,
+                            )
             with col_csv:
                 csv = df_lev.to_csv(index=False).encode("utf-8")
                 st.download_button(
@@ -939,7 +938,7 @@ def page_inventaris() -> None:
     st.divider()
     st.subheader("Voorraad corrigeren")
 
-    if not _heeft_recht("voorraad_wijzigen"):
+    if not _heeft_recht("voorraad_tellen"):
         st.info("Je hebt geen recht om de voorraad handmatig te wijzigen. Vraag de manager.")
         return
 
@@ -1693,151 +1692,163 @@ def page_instellingen() -> None:
 
     # ── Tab 2: Gebruikers ────────────────────────────────────────────────
     with tab_gebr:
-        st.subheader("Medewerkers")
-        st.caption(
-            "Maak medewerkers aan met rol 'Medewerker'. "
-            "Je kunt per medewerker aangeven wat ze mogen doen."
-        )
-
-        RECHTEN_LABELS = {
-            "voorraad_wijzigen": "Voorraad handmatig wijzigen",
-            "orders_versturen":  "Bestellingen goedkeuren & versturen",
-            "acties":            "Acties / campagnes aanmaken",
-            "recepten_beheren":  "Recepten beheren",
-        }
-
-        # Haal alle gebruikers van deze tenant op
-        alle_gebruikers = db.laad_alle_gebruikers()
-        tenant_gebruikers = [g for g in alle_gebruikers if g["tenant_id"] == tenant_id]
+        mijn_rol   = st.session_state.user_rol
+        mijn_perms = st.session_state.get("user_permissions", {})
         ingelogde_user = st.session_state.get("user_naam", "")
 
-        # Managers mogen alleen 'user' rol aanmaken (geen admin)
-        is_admin = st.session_state.user_rol == "admin"
-
-        if not tenant_gebruikers:
-            st.info("Nog geen medewerkers aangemaakt.")
+        # Managers zonder app-management rechten hebben geen gebruikersbeheer
+        heeft_app_recht = any(mijn_perms.get(r) for r in perm.APP_MANAGEMENT_RECHTEN)
+        if mijn_rol == "manager" and not heeft_app_recht:
+            st.info("Je hebt geen rechten voor gebruikersbeheer. Vraag de admin.")
         else:
-            for g in tenant_gebruikers:
-                if g["role"] == "admin" and not is_admin:
-                    continue  # managers zien geen admin accounts
-                rol_label = {"admin": "Admin", "manager": "Manager", "user": "Medewerker"}.get(g["role"], g["role"])
-                with st.expander(f"**{g['username']}** · {g.get('full_name', '')} · {rol_label}"):
-                    with st.form(f"form_gebr_edit_{g['id']}"):
-                        c1, c2 = st.columns(2)
-                        with c1:
-                            nieuwe_uname = st.text_input("Gebruikersnaam", value=g["username"])
-                            nieuwe_fnaam = st.text_input("Volledige naam", value=g.get("full_name", ""))
-                        with c2:
-                            nieuw_pw = st.text_input("Nieuw wachtwoord", type="password",
-                                                     placeholder="Laat leeg om niet te wijzigen")
-                            rol_opties = (["user", "manager", "admin"] if is_admin
-                                          else ["user", "manager"])
-                            rol_idx    = rol_opties.index(g["role"]) if g["role"] in rol_opties else 0
-                            nieuwe_rol = st.selectbox("Rol", rol_opties,
-                                                      format_func=lambda r: {"admin": "Admin",
-                                                                              "manager": "Manager",
-                                                                              "user": "Medewerker"}[r],
-                                                      index=rol_idx)
+            st.subheader("Medewerkers")
+            st.caption("Beheer rollen en rechten per medewerker. Wat iemand mag hangt af van zijn rol én de checkboxen.")
 
-                        # Permissies tonen alleen voor 'user' rol
-                        if g["role"] == "user":
-                            st.markdown("**Rechten voor deze medewerker:**")
-                            huidige_rechten = g.get("permissions") or {}
-                            perm_cols = st.columns(2)
-                            nieuwe_rechten = {}
-                            for pi, (perm_key, perm_label) in enumerate(RECHTEN_LABELS.items()):
-                                col = perm_cols[pi % 2]
-                                nieuwe_rechten[perm_key] = col.checkbox(
-                                    perm_label,
-                                    value=bool(huidige_rechten.get(perm_key, False)),
-                                    key=f"perm_{g['id']}_{perm_key}",
-                                )
-                        else:
-                            nieuwe_rechten = None  # admin/manager hebben altijd alle rechten
+            alle_gebruikers   = db.laad_alle_gebruikers()
+            tenant_gebruikers = [g for g in alle_gebruikers if g["tenant_id"] == tenant_id]
+            zichtbaar         = [g for g in tenant_gebruikers
+                                 if perm.kan_gebruiker_zien(mijn_rol, g["role"])]
 
-                        if st.form_submit_button("Opslaan", type="primary"):
-                            if not nieuwe_uname.strip():
-                                st.error("Gebruikersnaam mag niet leeg zijn.")
-                            else:
-                                ok, fout = db.update_gebruiker(
-                                    g["id"], nieuwe_uname.strip(),
-                                    nieuwe_fnaam.strip(), nieuwe_rol,
-                                    nieuw_pw or None,
+            if not zichtbaar:
+                st.info("Geen medewerkers om te beheren.")
+            else:
+                for g in zichtbaar:
+                    label = f"**{g['username']}** · {g.get('full_name', '')} · {perm.rol_label(g['role'])}"
+                    with st.expander(label):
+                        with st.form(f"form_gebr_edit_{g['id']}"):
+                            c1, c2 = st.columns(2)
+                            with c1:
+                                nieuwe_uname = st.text_input("Gebruikersnaam", value=g["username"])
+                                nieuwe_fnaam = st.text_input("Volledige naam", value=g.get("full_name", ""))
+                            with c2:
+                                nieuw_pw = st.text_input("Nieuw wachtwoord", type="password",
+                                                         placeholder="Laat leeg om niet te wijzigen")
+                                rol_opties = perm.beschikbare_rollen(mijn_rol)
+                                # Manager met alleen rollen_toewijzen: kan user→manager, niet downgraden
+                                if mijn_rol == "manager":
+                                    if not mijn_perms.get("rollen_toewijzen"):
+                                        rol_opties = [g["role"]]  # rol vastzetten
+                                rol_idx   = rol_opties.index(g["role"]) if g["role"] in rol_opties else 0
+                                nieuwe_rol = st.selectbox(
+                                    "Rol", rol_opties,
+                                    format_func=perm.rol_label,
+                                    index=rol_idx,
                                 )
-                                if ok and nieuwe_rechten is not None:
-                                    db.update_gebruiker_rechten(g["id"], nieuwe_rechten)
-                                if ok:
-                                    st.success("Gegevens bijgewerkt.")
-                                    st.rerun()
+
+                            # ── Rechten UI ────────────────────────────────────
+                            nieuwe_rechten: dict | None = None
+                            if g["role"] in ("user", "manager"):
+                                huidige_rechten = g.get("permissions") or {}
+                                # Managers zien alleen App management rechten
+                                te_tonen = (
+                                    {"App management": perm.RECHTEN_CATEGORIEËN["App management"]}
+                                    if g["role"] == "manager"
+                                    else perm.RECHTEN_CATEGORIEËN
+                                )
+                                nieuwe_rechten = {}
+                                for cat_naam, cat_rechten in te_tonen.items():
+                                    kan_bewerken = perm.kan_rechten_categorie_bewerken(mijn_rol, cat_naam)
+                                    st.markdown(f"**{cat_naam}**")
+                                    cols = st.columns(2)
+                                    for pi, (rk, rl) in enumerate(cat_rechten.items()):
+                                        nieuwe_rechten[rk] = cols[pi % 2].checkbox(
+                                            rl,
+                                            value=bool(huidige_rechten.get(rk, False)),
+                                            key=f"perm_{g['id']}_{rk}",
+                                            disabled=not kan_bewerken,
+                                        )
+
+                            if st.form_submit_button("Opslaan", type="primary"):
+                                if not nieuwe_uname.strip():
+                                    st.error("Gebruikersnaam mag niet leeg zijn.")
+                                elif not perm.kan_rol_wijzigen(mijn_rol, g["role"], nieuwe_rol):
+                                    st.error("Je mag deze rolwijziging niet uitvoeren.")
                                 else:
-                                    st.error(f"Opslaan mislukt: {fout}")
-
-                    if g["username"] != ingelogde_user:
-                        confirm_key = f"confirm_del_gebr_{g['id']}"
-                        if st.session_state.get(confirm_key):
-                            st.warning(f"Verwijder **{g['username']}**?")
-                            col_ja, col_nee = st.columns(2)
-                            with col_ja:
-                                if st.button("Ja, verwijder", key=f"ja_g_{g['id']}", type="primary"):
-                                    ok, _ = db.verwijder_gebruiker(g["id"])
+                                    ok, fout = db.update_gebruiker(
+                                        g["id"], nieuwe_uname.strip(),
+                                        nieuwe_fnaam.strip(), nieuwe_rol,
+                                        nieuw_pw or None,
+                                    )
+                                    if ok and nieuwe_rechten is not None:
+                                        db.update_gebruiker_rechten(g["id"], nieuwe_rechten)
                                     if ok:
-                                        st.session_state.pop(confirm_key, None)
-                                        st.success(f"{g['username']} verwijderd.")
+                                        st.success("Gegevens bijgewerkt.")
                                         st.rerun()
-                            with col_nee:
-                                if st.button("Annuleren", key=f"nee_g_{g['id']}"):
-                                    st.session_state.pop(confirm_key, None)
+                                    else:
+                                        st.error(f"Opslaan mislukt: {fout}")
+
+                        if g["username"] != ingelogde_user:
+                            confirm_key = f"confirm_del_gebr_{g['id']}"
+                            if st.session_state.get(confirm_key):
+                                st.warning(f"Verwijder **{g['username']}**?")
+                                col_ja, col_nee = st.columns(2)
+                                with col_ja:
+                                    if st.button("Ja, verwijder", key=f"ja_g_{g['id']}", type="primary"):
+                                        ok, _ = db.verwijder_gebruiker(g["id"])
+                                        if ok:
+                                            st.session_state.pop(confirm_key, None)
+                                            st.success(f"{g['username']} verwijderd.")
+                                            st.rerun()
+                                with col_nee:
+                                    if st.button("Annuleren", key=f"nee_g_{g['id']}"):
+                                        st.session_state.pop(confirm_key, None)
+                                        st.rerun()
+                            else:
+                                if st.button("Verwijder medewerker", key=f"del_g_{g['id']}"):
+                                    st.session_state[confirm_key] = True
                                     st.rerun()
+
+            # ── Nieuwe medewerker ──────────────────────────────────────────
+            kan_aanmaken = (
+                mijn_rol in ("admin", "super_admin") or
+                mijn_perms.get("gebruikers_aanmaken", False)
+            )
+            if kan_aanmaken:
+                st.divider()
+                st.subheader("Nieuwe medewerker toevoegen")
+                with st.form("form_nieuw_gebr_inst", clear_on_submit=True):
+                    c1, c2 = st.columns(2)
+                    with c1:
+                        nw_uname = st.text_input("Gebruikersnaam *")
+                        nw_fnaam = st.text_input("Volledige naam")
+                    with c2:
+                        nw_pw  = st.text_input("Wachtwoord *", type="password")
+                        nw_rol_opties = perm.beschikbare_rollen(mijn_rol)
+                        nw_rol = st.selectbox("Rol", nw_rol_opties, format_func=perm.rol_label)
+
+                    # Rechten voor nieuwe medewerker (standaard alles uit)
+                    nw_rechten: dict = {}
+                    if nw_rol == "user":
+                        for cat_naam, cat_rechten in perm.RECHTEN_CATEGORIEËN.items():
+                            kan_bewerken = perm.kan_rechten_categorie_bewerken(mijn_rol, cat_naam)
+                            st.markdown(f"**{cat_naam}**")
+                            cols = st.columns(2)
+                            for pi, (rk, rl) in enumerate(cat_rechten.items()):
+                                nw_rechten[rk] = cols[pi % 2].checkbox(
+                                    rl, value=False,
+                                    key=f"nw_perm_{rk}",
+                                    disabled=not kan_bewerken,
+                                )
+
+                    if st.form_submit_button("Medewerker aanmaken", type="primary"):
+                        if not nw_uname.strip() or not nw_pw:
+                            st.error("Gebruikersnaam en wachtwoord zijn verplicht.")
                         else:
-                            if st.button("Verwijder medewerker", key=f"del_g_{g['id']}"):
-                                st.session_state[confirm_key] = True
+                            rechten = nw_rechten if nw_rol == "user" else {}
+                            gelukt = db.maak_gebruiker_aan(
+                                tenant_id, nw_uname.strip(), nw_pw,
+                                nw_rol, nw_fnaam.strip(), rechten,
+                            )
+                            if gelukt:
+                                st.success(f"**{nw_uname.strip()}** aangemaakt.")
                                 st.rerun()
-
-        st.divider()
-        st.subheader("Nieuwe medewerker toevoegen")
-        with st.form("form_nieuw_gebr_inst", clear_on_submit=True):
-            c1, c2 = st.columns(2)
-            with c1:
-                nw_uname = st.text_input("Gebruikersnaam *")
-                nw_fnaam = st.text_input("Volledige naam")
-            with c2:
-                nw_pw  = st.text_input("Wachtwoord *", type="password")
-                nw_rol = st.selectbox(
-                    "Rol",
-                    ["user", "manager"] if not is_admin else ["user", "manager", "admin"],
-                    format_func=lambda r: {"admin": "Admin",
-                                           "manager": "Manager",
-                                           "user": "Medewerker"}[r],
-                )
-
-            # Permissies voor nieuwe medewerker (standaard alles uit)
-            st.markdown("**Rechten (alleen van toepassing bij rol Medewerker):**")
-            perm_cols_nw = st.columns(2)
-            nw_rechten = {}
-            for pi, (perm_key, perm_label) in enumerate(RECHTEN_LABELS.items()):
-                nw_rechten[perm_key] = perm_cols_nw[pi % 2].checkbox(
-                    perm_label, value=False, key=f"nw_perm_{perm_key}"
-                )
-
-            if st.form_submit_button("Medewerker aanmaken", type="primary"):
-                if not nw_uname.strip() or not nw_pw:
-                    st.error("Gebruikersnaam en wachtwoord zijn verplicht.")
-                else:
-                    rechten = nw_rechten if nw_rol == "user" else {}
-                    gelukt = db.maak_gebruiker_aan(
-                        tenant_id, nw_uname.strip(), nw_pw,
-                        nw_rol, nw_fnaam.strip(), rechten,
-                    )
-                    if gelukt:
-                        st.success(f"Medewerker **{nw_uname.strip()}** aangemaakt.")
-                        st.rerun()
-                    else:
-                        st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
+                            else:
+                                st.error("Aanmaken mislukt — gebruikersnaam bestaat mogelijk al.")
 
 
 # ── Admin ─────────────────────────────────────────────────────────────────
 def page_admin() -> None:
-    if st.session_state.user_rol != "admin":
+    if st.session_state.user_rol not in ("admin", "super_admin"):
         st.error("Geen toegang.")
         return
 
@@ -2105,6 +2116,13 @@ def main() -> None:
     if not st.session_state.ingelogd:
         page_login()
         return
+
+    # Sentry context bijwerken bij elke render (paginawissel of herlaad)
+    monitoring.stel_sentry_context_in(
+        tenant_id = str(st.session_state.get("tenant_id", "")),
+        user_naam = st.session_state.get("user_naam", ""),
+        pagina    = st.session_state.get("pagina", ""),
+    )
 
     with st.sidebar:
         st.markdown(
