@@ -6,9 +6,9 @@ from supabase import create_client, Client
 
 @st.cache_resource
 def get_client() -> Client:
-    """Gecachte Supabase client — één instantie per Streamlit sessie."""
+    """Gecachte Supabase client met service_role key — bypassed RLS server-side."""
     url = st.secrets["supabase"]["url"]
-    key = st.secrets["supabase"]["key"]
+    key = st.secrets["supabase"]["service_key"]
     return create_client(url, key)
 
 
@@ -64,12 +64,15 @@ def maak_gebruiker_aan(
     full_name:   str,
     permissions: dict | None = None,
 ) -> bool:
-    """Maak een nieuwe gebruiker aan. True als gelukt."""
+    """Maak een nieuwe gebruiker aan met bcrypt-gehasht wachtwoord. True als gelukt."""
     try:
+        # Hash het wachtwoord via pgcrypto — nooit plaintext opslaan
+        hash_resp = get_client().rpc("hash_password", {"p_password": password}).execute()
+        hashed = hash_resp.data
         get_client().table("tenant_users").insert({
             "tenant_id":   tenant_id,
             "username":    username,
-            "password":    password,
+            "password":    hashed,
             "role":        role,
             "full_name":   full_name,
             "is_active":   True,
@@ -142,7 +145,8 @@ def update_gebruiker(
             "role":      role,
         }
         if password:
-            data["password"] = password
+            hash_resp = get_client().rpc("hash_password", {"p_password": password}).execute()
+            data["password"] = hash_resp.data
         get_client().table("tenant_users").update(data).eq("id", user_id).execute()
         return True, ""
     except Exception as e:
@@ -169,25 +173,19 @@ def update_tenant(tenant_id: str, name: str) -> tuple[bool, str]:
 
 def verificeer_gebruiker(username: str, password: str) -> dict | None:
     """
-    Verifieer inloggegevens tegen de tenant_users tabel.
+    Verifieer inloggegevens via pgcrypto crypt() — wachtwoorden zijn bcrypt-gehasht.
     Geeft dict terug met tenant_id, tenant_naam, username, role, permissions — of None als mislukt.
     """
     try:
-        resp = (
-            get_client()
-            .table("tenant_users")
-            .select("*, tenants(name)")
-            .eq("username", username)
-            .eq("password", password)
-            .eq("is_active", True)
-            .execute()
-        )
+        resp = get_client().rpc(
+            "verificeer_login",
+            {"p_username": username, "p_password": password},
+        ).execute()
         if resp.data:
             user = resp.data[0]
-            tenant_info = user.get("tenants") or {}
             return {
                 "tenant_id":   user["tenant_id"],
-                "tenant_naam": tenant_info.get("name", "Onbekend"),
+                "tenant_naam": user["tenant_naam"],
                 "username":    user["username"],
                 "role":        user["role"],
                 "full_name":   user.get("full_name", user["username"]),
