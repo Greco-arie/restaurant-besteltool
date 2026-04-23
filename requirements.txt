@@ -12,5 +12,8 @@ reportlab>=4.1.0
 sentry-sdk>=2.5.0
 structlog>=24.1.0
 
+# JWT signing voor tenant-specifieke Supabase clients (A4 RLS)
+PyJWT>=2.0.0
+
 # Testing
 pytest>=8.0.0

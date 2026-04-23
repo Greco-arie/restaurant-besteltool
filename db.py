@@ -4,8 +4,10 @@ import hashlib
 import secrets
 from datetime import datetime, timezone, timedelta
 
+import jwt as pyjwt
 import streamlit as st
 from supabase import create_client, Client
+from supabase.lib.client_options import SyncClientOptions
 from models import SupplierData, UserSession
 
 
@@ -19,6 +21,32 @@ def get_client() -> Client:
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["service_key"]
     return create_client(url, key)
+
+
+def get_tenant_client(tenant_id: str) -> Client:
+    """
+    Retourneert een Supabase client met een gesigned JWT voor de opgegeven tenant.
+    JWT bevat role=authenticated + tenant_id, geldig 1 uur.
+    RLS policies controleren tenant_id via auth.jwt() ->> 'tenant_id'.
+    Niet gecached: elke aanroep genereert een verse JWT om expiry te voorkomen.
+    """
+    url        = st.secrets["supabase"]["url"]
+    anon_key   = st.secrets["supabase"]["anon_key"]
+    jwt_secret = st.secrets["supabase"]["jwt_secret"]
+    now        = datetime.now(timezone.utc)
+    payload    = {
+        "iss":       "supabase",
+        "role":      "authenticated",
+        "iat":       int(now.timestamp()),
+        "exp":       int((now + timedelta(hours=1)).timestamp()),
+        "sub":       str(tenant_id),
+        "tenant_id": str(tenant_id),
+    }
+    token = pyjwt.encode(payload, jwt_secret, algorithm="HS256")
+    return create_client(
+        url, anon_key,
+        options=SyncClientOptions(headers={"Authorization": f"Bearer {token}"}),
+    )
 
 
 def laad_alle_tenants() -> list[dict]:
@@ -184,10 +212,9 @@ def laad_leveranciers(tenant_id: str) -> list[dict]:
     """Geeft alle actieve leveranciers voor de tenant als lijst."""
     try:
         resp = (
-            get_client()
+            get_tenant_client(tenant_id)
             .table("suppliers")
             .select("*")
-            .eq("tenant_id", tenant_id)
             .eq("is_active", True)
             .order("name")
             .execute()
@@ -213,7 +240,7 @@ def maak_leverancier_aan(
 ) -> tuple[bool, str]:
     """Maak een nieuwe leverancier aan. Geeft (True, '') of (False, foutmelding)."""
     try:
-        get_client().table("suppliers").insert({
+        get_tenant_client(tenant_id).table("suppliers").insert({
             "tenant_id":      tenant_id,
             "name":           name.strip(),
             "email":          email.strip(),
@@ -304,7 +331,7 @@ def sla_verzonden_email_op(
 ) -> bool:
     """Sla een verzonden bestelling op in sent_emails. True als gelukt."""
     try:
-        get_client().table("sent_emails").insert({
+        get_tenant_client(tenant_id).table("sent_emails").insert({
             "tenant_id":     tenant_id,
             "supplier_id":   supplier_id,
             "supplier_naam": supplier_naam,
@@ -321,10 +348,9 @@ def laad_verzonden_emails(tenant_id: str, limit: int = 50) -> list[dict]:
     """Geeft de laatste verzonden bestellingen terug voor een tenant."""
     try:
         resp = (
-            get_client()
+            get_tenant_client(tenant_id)
             .table("sent_emails")
             .select("supplier_naam, bestel_datum, resend_id, status, timestamp")
-            .eq("tenant_id", tenant_id)
             .order("timestamp", desc=True)
             .limit(limit)
             .execute()
@@ -352,11 +378,10 @@ def laad_producten(tenant_id: str) -> list[dict]:
     """
     try:
         resp = (
-            get_client()
+            get_tenant_client(tenant_id)
             .table("products")
             .select("sku_id, naam, eenheid, verpakkingseenheid, vraag_per_cover, "
                     "minimumvoorraad, buffer_pct, is_actief, suppliers(name)")
-            .eq("tenant_id", tenant_id)
             .eq("is_actief", True)
             .order("sku_id")
             .execute()
@@ -393,7 +418,7 @@ def sla_product_op(
 ) -> tuple[bool, str]:
     """Upsert een product voor de tenant. Geeft (True, '') of (False, foutmelding)."""
     try:
-        get_client().table("products").upsert({
+        get_tenant_client(tenant_id).table("products").upsert({
             "tenant_id":          tenant_id,
             "sku_id":             sku_id,
             "naam":               naam,
