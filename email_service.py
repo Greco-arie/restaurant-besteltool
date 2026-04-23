@@ -228,6 +228,149 @@ def verzend_bestelling(
         return False, str(e)
 
 
+# ── Password reset e-mail ──────────────────────────────────────────────────
+
+def verzend_reset_mail(
+    to_email:        str,
+    token:           str,
+    restaurant_naam: str,
+    gebruikersnaam:  str,
+    reset_url:       str | None = None,
+) -> tuple[bool, str]:
+    """
+    Stuur een wachtwoord-reset link naar de gebruiker.
+
+    Parameters
+    ----------
+    to_email        : e-mailadres van de ontvanger
+    token           : plain reset-token (fallback als reset_url None is)
+    restaurant_naam : naam/slug van het restaurant (voor onderwerpveld)
+    gebruikersnaam  : gebruikersnaam van de ontvanger
+    reset_url       : volledige URL inclusief ?token=... (optioneel)
+    """
+    try:
+        import resend  # type: ignore
+    except ImportError:
+        return False, "resend niet geïnstalleerd"
+
+    api_key = _lees_resend_key()
+    if not api_key:
+        return False, "RESEND_API_KEY niet ingesteld"
+    resend.api_key = api_key
+
+    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
+    afzender = (
+        f"no-reply@{restaurant_naam}.besteltool.nl"
+        if _domein_geverifieerd
+        else "onboarding@resend.dev"
+    )
+
+    if reset_url:
+        link_blok = f"""
+<p style="text-align:center;margin:32px 0">
+  <a href="{reset_url}" style="background:#2E5AAC;color:white;padding:12px 28px;
+     border-radius:8px;text-decoration:none;font-weight:600;display:inline-block">
+    Wachtwoord instellen
+  </a>
+</p>
+<p style="color:#6B7280;font-size:0.85rem">
+  Of kopieer deze link: <code>{reset_url}</code>
+</p>"""
+    else:
+        link_blok = f"""
+<p>Gebruik dit token in de Besteltool (plak het in het veld "Reset-token"):</p>
+<p style="font-family:monospace;background:#F3F4F6;padding:12px;border-radius:6px;
+   word-break:break-all">{token}</p>"""
+
+    html = f"""
+<html><body style="font-family:sans-serif;color:#111827;max-width:560px;margin:0 auto">
+<h2 style="color:#2E5AAC">Wachtwoord resetten — {restaurant_naam}</h2>
+<p>Hallo {gebruikersnaam},</p>
+<p>We hebben een verzoek ontvangen om je wachtwoord te resetten.
+   Klik op de knop hieronder. De link is <strong>1 uur geldig</strong>.</p>
+{link_blok}
+<p style="color:#6B7280;font-size:0.85rem">
+  Heb jij dit niet aangevraagd? Dan hoef je niets te doen — je wachtwoord blijft ongewijzigd.
+</p>
+</body></html>"""
+
+    try:
+        resp = resend.Emails.send({
+            "from":    afzender,
+            "to":      [to_email],
+            "subject": f"Wachtwoord resetten – {restaurant_naam}",
+            "html":    html,
+        })
+        return True, getattr(resp, "id", "") or str(resp)
+    except Exception as e:
+        logger.error("reset_mail_fout: %s", e)
+        return False, str(e)
+
+
+# ── Welkomstmail ───────────────────────────────────────────────────────────
+
+def verzend_welkomstmail(
+    to_email:        str,
+    gebruikersnaam:  str,
+    restaurant_naam: str,
+    tenant_slug:     str,
+) -> tuple[bool, str]:
+    """Stuur een welkomstmail naar een nieuwe tenant-admin."""
+    try:
+        import resend  # type: ignore
+    except ImportError:
+        return False, "resend niet geïnstalleerd"
+
+    api_key = _lees_resend_key()
+    if not api_key:
+        return False, "RESEND_API_KEY niet ingesteld"
+    resend.api_key = api_key
+
+    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
+    afzender = (
+        "no-reply@besteltool.nl"
+        if _domein_geverifieerd
+        else "onboarding@resend.dev"
+    )
+
+    html = f"""
+<html><body style="font-family:sans-serif;color:#111827;max-width:560px;margin:0 auto">
+<h2 style="color:#2E5AAC">Welkom bij de Besteltool!</h2>
+<p>Hallo {gebruikersnaam},</p>
+<p>Je account voor <strong>{restaurant_naam}</strong> is aangemaakt.
+   Hier zijn je inloggegevens:</p>
+<table style="border-collapse:collapse;width:100%;margin:16px 0">
+  <tr>
+    <td style="padding:8px;border:1px solid #CBD5E1;font-weight:600">Restaurant (slug)</td>
+    <td style="padding:8px;border:1px solid #CBD5E1;font-family:monospace">{tenant_slug}</td>
+  </tr>
+  <tr>
+    <td style="padding:8px;border:1px solid #CBD5E1;font-weight:600">Gebruikersnaam</td>
+    <td style="padding:8px;border:1px solid #CBD5E1;font-family:monospace">{gebruikersnaam}</td>
+  </tr>
+</table>
+<p style="color:#B45309;background:#FEF3C7;padding:10px;border-radius:6px">
+  <strong>Let op:</strong> je hebt een tijdelijk wachtwoord ontvangen van je beheerder.
+  Verander dit zo snel mogelijk via "Wachtwoord vergeten" op het inlogscherm.
+</p>
+<p style="color:#6B7280;font-size:0.85rem;margin-top:24px">
+  Vragen? Neem contact op met je beheerder.
+</p>
+</body></html>"""
+
+    try:
+        resp = resend.Emails.send({
+            "from":    afzender,
+            "to":      [to_email],
+            "subject": f"Welkom bij de Besteltool – {restaurant_naam}",
+            "html":    html,
+        })
+        return True, getattr(resp, "id", "") or str(resp)
+    except Exception as e:
+        logger.error("welkomstmail_fout: %s", e)
+        return False, str(e)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _lees_resend_key() -> str | None:

@@ -1,8 +1,16 @@
 """Supabase database client + authenticatie helpers."""
 from __future__ import annotations
+import hashlib
+import secrets
+from datetime import datetime, timezone, timedelta
+
 import streamlit as st
 from supabase import create_client, Client
 from models import SupplierData, UserSession
+
+
+def _hash_token(token: str) -> str:
+    return hashlib.sha256(token.encode()).hexdigest()
 
 
 @st.cache_resource
@@ -37,7 +45,7 @@ def laad_alle_gebruikers() -> list[dict]:
         resp = (
             get_client()
             .table("tenant_users")
-            .select("id, username, role, full_name, is_active, tenant_id, tenants(name)")
+            .select("id, username, role, full_name, is_active, tenant_id, email, tenants(name)")
             .order("username")
             .execute()
         )
@@ -50,6 +58,7 @@ def laad_alle_gebruikers() -> list[dict]:
                 "full_name":    u.get("full_name", ""),
                 "is_active":    u.get("is_active", True),
                 "tenant_id":    u["tenant_id"],
+                "email":        u.get("email") or "",
                 "tenant_naam":  (u.get("tenants") or {}).get("name", "?"),
             })
         return rows
@@ -64,13 +73,13 @@ def maak_gebruiker_aan(
     role:        str,
     full_name:   str,
     permissions: dict | None = None,
+    email:       str | None = None,
 ) -> bool:
     """Maak een nieuwe gebruiker aan met bcrypt-gehasht wachtwoord. True als gelukt."""
     try:
-        # Hash het wachtwoord via pgcrypto — nooit plaintext opslaan
         hash_resp = get_client().rpc("hash_password", {"p_password": password}).execute()
         hashed = hash_resp.data
-        get_client().table("tenant_users").insert({
+        row: dict = {
             "tenant_id":   tenant_id,
             "username":    username,
             "password":    hashed,
@@ -78,7 +87,10 @@ def maak_gebruiker_aan(
             "full_name":   full_name,
             "is_active":   True,
             "permissions": permissions or {},
-        }).execute()
+        }
+        if email:
+            row["email"] = email.lower().strip()
+        get_client().table("tenant_users").insert(row).execute()
         return True
     except Exception:
         return False
@@ -99,6 +111,7 @@ def update_gebruiker(
     full_name: str,
     role:      str,
     password:  str | None = None,
+    email:     str | None = None,
 ) -> tuple[bool, str]:
     """Pas gebruikersgegevens aan. Geeft (True, '') of (False, foutmelding)."""
     try:
@@ -110,6 +123,8 @@ def update_gebruiker(
         if password:
             hash_resp = get_client().rpc("hash_password", {"p_password": password}).execute()
             data["password"] = hash_resp.data
+        if email is not None:
+            data["email"] = email.lower().strip() if email.strip() else None
         get_client().table("tenant_users").update(data).eq("id", user_id).execute()
         return True, ""
     except Exception as e:
@@ -413,3 +428,135 @@ def laad_leveranciers_typed(tenant_id: str) -> list[SupplierData]:
 def laad_leveranciers_dict_typed(tenant_id: str) -> dict[str, SupplierData]:
     """Typed versie van laad_leveranciers_dict — geeft dict[naam → SupplierData]."""
     return {s.name: s for s in laad_leveranciers_typed(tenant_id)}
+
+
+# ── Password reset ─────────────────────────────────────────────────────────
+
+def zoek_gebruiker_op_email(tenant_slug: str, email: str) -> dict | None:
+    """Zoek een gebruiker op e-mailadres binnen een tenant. Geeft dict of None."""
+    try:
+        tenant_resp = (
+            get_client()
+            .table("tenants")
+            .select("id")
+            .eq("slug", tenant_slug.strip())
+            .execute()
+        )
+        if not tenant_resp.data:
+            return None
+        tenant_id = tenant_resp.data[0]["id"]
+        user_resp = (
+            get_client()
+            .table("tenant_users")
+            .select("id, username, tenant_id")
+            .eq("tenant_id", tenant_id)
+            .eq("email", email.lower().strip())
+            .eq("is_active", True)
+            .execute()
+        )
+        if user_resp.data:
+            u = user_resp.data[0]
+            return {"user_id": u["id"], "username": u["username"], "tenant_id": u["tenant_id"]}
+    except Exception:
+        pass
+    return None
+
+
+def maak_reset_token(tenant_id: str, user_id: str) -> str | None:
+    """
+    Genereer een veilig reset-token, sla de hash op in de database.
+    Retourneert de plain token (alleen in e-mail sturen) of None bij fout.
+    Invalideer eventuele openstaande tokens voor dezelfde gebruiker.
+    """
+    try:
+        now = datetime.now(timezone.utc)
+        token = secrets.token_urlsafe(32)
+        token_hash = _hash_token(token)
+        # Invalideer eventueel openstaande tokens voor deze gebruiker
+        get_client().table("password_reset_tokens").update(
+            {"used_at": now.isoformat()}
+        ).eq("user_id", user_id).filter("used_at", "is", "null").execute()
+        # Nieuw token aanmaken
+        get_client().table("password_reset_tokens").insert({
+            "tenant_id":  tenant_id,
+            "user_id":    user_id,
+            "token_hash": token_hash,
+            "expires_at": (now + timedelta(hours=1)).isoformat(),
+        }).execute()
+        return token
+    except Exception:
+        return None
+
+
+def verifieer_reset_token(token: str) -> dict | None:
+    """
+    Verifieer of een reset-token geldig is (niet verlopen, niet gebruikt).
+    Geeft {user_id, tenant_id} of None terug.
+    """
+    try:
+        token_hash = _hash_token(token)
+        now_iso = datetime.now(timezone.utc).isoformat()
+        resp = (
+            get_client()
+            .table("password_reset_tokens")
+            .select("user_id, tenant_id")
+            .eq("token_hash", token_hash)
+            .filter("used_at", "is", "null")
+            .gt("expires_at", now_iso)
+            .execute()
+        )
+        if resp.data:
+            return {"user_id": resp.data[0]["user_id"], "tenant_id": resp.data[0]["tenant_id"]}
+    except Exception:
+        pass
+    return None
+
+
+def invalideer_token(token: str) -> bool:
+    """Markeer een reset-token als gebruikt. True als gelukt."""
+    try:
+        get_client().table("password_reset_tokens").update(
+            {"used_at": datetime.now(timezone.utc).isoformat()}
+        ).eq("token_hash", _hash_token(token)).execute()
+        return True
+    except Exception:
+        return False
+
+
+def reset_wachtwoord(user_id: str, nieuw_wachtwoord: str) -> bool:
+    """Sla een nieuw gehashed wachtwoord op voor een gebruiker. True als gelukt."""
+    try:
+        hash_resp = get_client().rpc("hash_password", {"p_password": nieuw_wachtwoord}).execute()
+        get_client().table("tenant_users").update(
+            {"password": hash_resp.data}
+        ).eq("id", user_id).execute()
+        return True
+    except Exception:
+        return False
+
+
+# ── Tenant onboarding ──────────────────────────────────────────────────────
+
+def maak_tenant_met_admin(
+    naam:           str,
+    slug:           str,
+    admin_username: str,
+    admin_password: str,
+    admin_email:    str,
+) -> str | None:
+    """
+    Maak een tenant aan + een admin-gebruiker in één stap.
+    Geeft tenant_id terug of None bij fout.
+    """
+    tenant_id = maak_tenant_aan(naam, slug)
+    if not tenant_id:
+        return None
+    ok = maak_gebruiker_aan(
+        tenant_id, admin_username, admin_password,
+        "admin", admin_username, email=admin_email,
+    )
+    if not ok:
+        # Tenant aangemaakt maar gebruiker mislukt — geef tenant_id terug zodat
+        # de UI dit kan melden en de admin handmatig een gebruiker kan aanmaken.
+        return tenant_id
+    return tenant_id

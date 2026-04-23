@@ -313,6 +313,11 @@ def page_login() -> None:
             else:
                 st.error("Restaurant, gebruikersnaam of wachtwoord klopt niet.")
 
+        st.markdown("<br>", unsafe_allow_html=True)
+        if st.button("Wachtwoord vergeten?", use_container_width=True, type="secondary"):
+            st.session_state["_show_reset"] = True
+            st.rerun()
+
 
 # ── Scherm 1 — Dag afsluiten ────────────────────────────────────────────
 from views.page_closing import render as page_closing
@@ -347,6 +352,10 @@ from views.page_instellingen import render as page_instellingen
 
 # ── Admin ────────────────────────────────────────────────────────────────
 from views.page_admin import render as page_admin
+
+# ── Password reset ────────────────────────────────────────────────────────
+from views.page_password_reset import render_aanvraag as page_reset_aanvraag
+from views.page_password_reset import render_nieuw_wachtwoord as page_reset_nieuw
 
 
 # ── Navigatie ──────────────────────────────────────────────────────────────
@@ -397,7 +406,30 @@ def main() -> None:
             scrolling=False,
         )
 
+    # Password reset via URL-token (vóór login-check — gebruiker is uitgelogd)
+    reset_token = st.query_params.get("token")
+    if reset_token:
+        page_reset_nieuw(reset_token)
+        return
+
     if not st.session_state.ingelogd:
+        # Toon reset-aanvraag als gebruiker op "Wachtwoord vergeten?" heeft geklikt
+        if st.session_state.get("_show_reset"):
+            page_reset_aanvraag()
+            st.markdown("<br>", unsafe_allow_html=True)
+            col_l, col_m, col_r = st.columns([1, 1.4, 1])
+            with col_m:
+                if st.button("← Terug naar inloggen", use_container_width=True):
+                    st.session_state.pop("_show_reset", None)
+                    st.rerun()
+            return
+
+        # Toon succesmelding na wachtwoord reset
+        if st.session_state.pop("_reset_success", False):
+            col_l, col_m, col_r = st.columns([1, 1.4, 1])
+            with col_m:
+                st.success("Wachtwoord succesvol gewijzigd. Log in met je nieuwe wachtwoord.")
+
         page_login()
         return
 

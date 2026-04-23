@@ -3,27 +3,92 @@ from __future__ import annotations
 import streamlit as st
 import db
 import monitoring
+import email_service as mail
 
 
 def render() -> None:
-    # Strikte gate: alleen super_admin mag klanten cross-tenant beheren.
-    # st.stop() hard-stopt zodat sub-functies en verdere widgets nooit renderen.
     if st.session_state.get("user_rol") != "super_admin":
         st.error("Geen toegang. Deze pagina is alleen voor super administrators.")
         st.stop()
 
     st.title("Beheer")
     st.caption("Klanten, gebruikers en leveranciersinstellingen beheren.")
-    tab_klanten, tab_gebruikers, tab_systeem = st.tabs(["Klanten", "Gebruikers", "Systeem"])
+    tab_klanten, tab_onboarding, tab_gebruikers, tab_systeem = st.tabs(
+        ["Klanten", "Nieuwe klant", "Gebruikers", "Systeem"]
+    )
 
     with tab_klanten:
         _tab_klanten()
+
+    with tab_onboarding:
+        _tab_nieuwe_klant()
 
     with tab_gebruikers:
         _tab_gebruikers()
 
     with tab_systeem:
         _tab_systeem()
+
+
+def _tab_nieuwe_klant() -> None:
+    st.subheader("Nieuwe klant onboarden")
+    st.caption(
+        "Maak een nieuwe tenant aan met één admin-gebruiker. "
+        "Er wordt automatisch een welkomstmail verstuurd."
+    )
+
+    with st.form("form_onboarding"):
+        st.markdown("**Restaurantgegevens**")
+        col1, col2 = st.columns(2)
+        with col1:
+            naam = st.text_input("Naam restaurant", placeholder="Restaurant De Bijenkorf")
+        with col2:
+            slug = st.text_input(
+                "Slug",
+                placeholder="de-bijenkorf",
+                help="Alleen a-z, 0-9 en koppeltekens. Wordt gebruikt op het inlogscherm.",
+            )
+
+        st.markdown("**Admin-gebruiker**")
+        col3, col4 = st.columns(2)
+        with col3:
+            admin_username  = st.text_input("Gebruikersnaam admin")
+            admin_email     = st.text_input("E-mailadres admin", placeholder="manager@restaurant.nl")
+        with col4:
+            admin_wachtwoord = st.text_input("Tijdelijk wachtwoord", type="password",
+                                              help="De admin kan dit later zelf resetten.")
+
+        aanmaken = st.form_submit_button(
+            "Klant aanmaken + welkomstmail sturen", type="primary", use_container_width=True
+        )
+
+    if aanmaken:
+        if not naam or not slug or not admin_username or not admin_wachtwoord or not admin_email:
+            st.error("Vul alle velden in.")
+        elif " " in slug or slug != slug.lower():
+            st.error("Slug mag geen spaties bevatten en moet kleine letters zijn.")
+        else:
+            tenant_id = db.maak_tenant_met_admin(
+                naam.strip(), slug.strip().lower(),
+                admin_username.strip(), admin_wachtwoord, admin_email.strip(),
+            )
+            if tenant_id:
+                ok_mail, fout_mail = mail.verzend_welkomstmail(
+                    to_email=admin_email.strip(),
+                    gebruikersnaam=admin_username.strip(),
+                    restaurant_naam=naam.strip(),
+                    tenant_slug=slug.strip().lower(),
+                )
+                if ok_mail:
+                    st.success(
+                        f"✅ Klant **{naam}** aangemaakt. "
+                        f"Welkomstmail verstuurd naar {admin_email}."
+                    )
+                else:
+                    st.success(f"✅ Klant **{naam}** aangemaakt.")
+                    st.warning(f"Welkomstmail kon niet worden verstuurd: {fout_mail}")
+            else:
+                st.error("Aanmaken mislukt — slug bestaat mogelijk al.")
 
 
 def _tab_systeem() -> None:
@@ -136,6 +201,10 @@ def _tab_gebruikers() -> None:
                 with col1:
                     nieuwe_username  = st.text_input("Gebruikersnaam", value=g["username"])
                     nieuwe_naam      = st.text_input("Volledige naam",  value=g.get("full_name", ""))
+                    nieuw_email      = st.text_input(
+                        "E-mailadres", value=g.get("email") or "",
+                        placeholder="voor wachtwoord reset",
+                    )
                 with col2:
                     nieuw_wachtwoord = st.text_input(
                         "Nieuw wachtwoord", type="password",
@@ -153,6 +222,7 @@ def _tab_gebruikers() -> None:
                             g["id"], nieuwe_username.strip(),
                             nieuwe_naam.strip(), nieuwe_rol,
                             nieuw_wachtwoord or None,
+                            email=nieuw_email.strip() or None,
                         )
                         if ok:
                             st.success("Gegevens bijgewerkt.")
@@ -199,6 +269,9 @@ def _tab_gebruikers() -> None:
             with col1:
                 gebruikersnaam = st.text_input("Gebruikersnaam")
                 volledige_naam = st.text_input("Volledige naam")
+                gebruiker_email = st.text_input(
+                    "E-mailadres", placeholder="voor wachtwoord reset (optioneel)"
+                )
             with col2:
                 wachtwoord = st.text_input("Wachtwoord", type="password")
                 rol = st.selectbox("Rol", ["user", "manager", "admin"],
@@ -213,7 +286,8 @@ def _tab_gebruikers() -> None:
                     tenant_id_new = tenant_opties[gekozen_tenant]
                     gelukt = db.maak_gebruiker_aan(
                         tenant_id_new, gebruikersnaam.strip(), wachtwoord,
-                        rol, volledige_naam.strip()
+                        rol, volledige_naam.strip(),
+                        email=gebruiker_email.strip() or None,
                     )
                     if gelukt:
                         st.success(f"Gebruiker **{gebruikersnaam}** aangemaakt voor {gekozen_tenant}.")
