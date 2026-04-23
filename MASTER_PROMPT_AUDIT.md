@@ -1,6 +1,6 @@
 # AUDIT ACTIEPLAN — MASTER PROMPT
 # Restaurant Besteltool · Productie-gereedheid
-# Versie: A5.0 · Aangemaakt: 2026-04-23 · Bijgewerkt: 2026-04-24
+# Versie: A6.0 · Aangemaakt: 2026-04-23 · Bijgewerkt: 2026-04-24
 
 ================================================================
 HOE TE GEBRUIKEN
@@ -23,7 +23,7 @@ Productiegericht: lever pas op als iets aantoonbaar werkt.
 Spreek Nederlands naar de manager, Engels in code en commits.
 
 NIET HERBOUWEN wat al bestaat:
-  email_service.py   → verzend_bestelling(), _genereer_pdf()
+  email_service.py   → verzend_bestelling(), _genereer_pdf(), verzend_lage_voorraad_alert()
   monitoring.py      → log_event(), log_error(), stel_sentry_context_in()
   forecast.py        → bereken_forecast() en sub-functies
   recommendation.py  → bereken_alle_adviezen(), groepeer_per_leverancier()
@@ -31,6 +31,7 @@ NIET HERBOUWEN wat al bestaat:
   learning.py        → bereken_correctiefactor(), laad_accuracy_overzicht()
   db.py              → get_client(), get_tenant_client(), laad_leveranciers_dict()
   models.py          → WeatherData, ForecastResult, UserSession, Product
+  views/page_dashboard.py → render() (dashboard A5)
 
 ================================================================
 PROJECTCONTEXT (niet opnieuw uitleggen — vertrouw hierop)
@@ -60,8 +61,8 @@ Bekende technische schuld (volledig gedocumenteerd in audit van 2026-04-23):
   ✅ Geen password reset flow OPGELOST (2026-04-23)
   ✅ Geen self-service tenant onboarding OPGELOST (2026-04-23)
   ✅ RLS omzeild via service_role OPGELOST (2026-04-24)
-  🟡 Geen centraal dashboard
-  🟡 Geen proactieve notificaties
+  ✅ Geen centraal dashboard OPGELOST (2026-04-24)
+  ✅ Geen proactieve notificaties OPGELOST (2026-04-24)
   🟡 Geen centrale audit log
 
 ================================================================
@@ -71,90 +72,94 @@ A1  Kritieke fixes                     ✅ DONE (2026-04-23)
 A2  Staging + CI/CD                    ✅ DONE (2026-04-23)
 A3  Password reset + tenant onboarding ✅ DONE (2026-04-23)
 A4  RLS + JWT enforcement              ✅ DONE (2026-04-24)
-A5  Centraal dashboard + notificaties  ← ACTIEVE FASE
-A6  Audit logs + wekelijkse rapportage
+A5  Centraal dashboard + notificaties  ✅ DONE (2026-04-24)
+A6  Audit logs + wekelijkse rapportage ← ACTIEVE FASE
 
 ================================================================
 ██████████████████████████████████████████████████████████████
-ACTIEVE FASE: A5 — CENTRAAL DASHBOARD + NOTIFICATIES
+ACTIEVE FASE: A6 — AUDIT LOGS + WEKELIJKSE RAPPORTAGE
 ██████████████████████████████████████████████████████████████
 ================================================================
 
-Doel: Manager ziet totaalplaatje op één pagina zonder in te loggen.
-      Krijgt proactieve alerts zonder de app te hoeven openen.
+Doel: Elke actie is traceerbaar. Wekelijkse audit per restaurant.
 
 ----------------------------------------------------------------
-STAP A5.1 — MANAGER DASHBOARD PAGINA
+STAP A6.1 — AUDIT LOG TABEL (SUPABASE MIGRATIE)
 ----------------------------------------------------------------
-Maak views/page_dashboard.py aan met:
-  - Omzet vandaag vs. gemiddeld (uit sales_history)
-  - Covers vandaag vs. forecast (uit reservations of forecast_log)
-  - Lage voorraad alert: producten onder minimumvoorraad
-    (gebruik laad_huidige_voorraad() uit inventory.py)
-  - Laatste 5 verzonden bestellingen (laad_verzonden_emails())
-Toegang: alleen role manager, admin, super_admin (via permissions.py)
-Gebruik get_tenant_client() voor alle queries.
+Maak supabase_migration_v13_audit_log.sql aan:
+  CREATE TABLE audit_log (
+    id           uuid DEFAULT gen_random_uuid() PRIMARY KEY,
+    tenant_id    uuid NOT NULL REFERENCES tenants(id),
+    user_naam    text NOT NULL,
+    actie        text NOT NULL,   -- bijv. 'login', 'bestelling_verzonden', 'voorraad_opgeslagen'
+    details      jsonb,           -- extra context (leverancier, bedrag, etc.)
+    created_at   timestamptz DEFAULT now()
+  );
+  RLS: tenant_id = auth.jwt() ->> 'tenant_id' (lezen)
+       INSERT via service_role (schrijven vanuit app)
+  Index op tenant_id + created_at
 
 ----------------------------------------------------------------
-STAP A5.2 — DAGELIJKSE FORECAST E-MAIL (22:00)
+STAP A6.2 — LOGIN EVENTS LOGGEN
 ----------------------------------------------------------------
-Maak .github/workflows/daily_forecast_email.yml aan:
-  - Schedule: cron 0 22 * * * (22:00 UTC)
-  - Roept een nieuw script aan: scripts/stuur_forecast_email.py
-  - Script: laadt forecast voor morgen, stuurt via Resend
-  - Gebruik service_key (GitHub secret) voor database-toegang
-  Hergebruik: email_service.py patronen voor e-mail opmaak
+Voeg toe aan app.py (na succesvolle login in page_login()):
+  - log_audit_event(tenant_id, user_naam, 'login', {})
+Maak db.py functie: log_audit_event(tenant_id, user_naam, actie, details)
+  - Schrijft via service_role (bypast RLS)
+  - Gooit nooit een exception naar de caller (try/except intern)
 
 ----------------------------------------------------------------
-STAP A5.3 — LAGE VOORRAAD ALERT BIJ CLOSING
+STAP A6.3 — KERNACTIES LOGGEN
 ----------------------------------------------------------------
-Voeg toe aan views/page_closing.py (na opslaan sluitstock):
-  - Controleer welke producten onder minimumvoorraad zitten
-  - Als er producten zijn: stuur alert-e-mail naar manager
-  - Gebruik bestaande email_service.py structuur
-  - Alleen sturen als manager-email bekend is (tenant_users)
+Log de volgende acties in de bestaande code:
+  - views/page_closing.py  → 'sluiting_opgeslagen'  {covers, omzet}
+  - views/page_review.py   → 'bestelling_verzonden'  {leverancier, datum}
+  - db.py maak_gebruiker_aan() → 'gebruiker_aangemaakt' {username, role}
+  - db.py maak_tenant_aan()   → 'tenant_aangemaakt'    {naam, slug}
 
 ----------------------------------------------------------------
-STOP CONDITIE FASE A5
+STAP A6.4 — WEKELIJKSE AUDIT E-MAIL (GITHUB ACTIONS)
 ----------------------------------------------------------------
-Fase A5 is klaar wanneer ALLE punten groen zijn:
+Maak .github/workflows/weekly_audit_email.yml aan:
+  - Schedule: cron 0 8 * * 1 (maandag 08:00 UTC)
+  - Script: scripts/stuur_audit_email.py
+  - Per tenant: samenvatting van de afgelopen 7 dagen
+    (logins, bestellingen, sluitingen, gebruikerswijzigingen)
+  - Stuur naar manager/admin e-mailadressen van die tenant
 
-  [ ] page_dashboard.py aangemaakt en bereikbaar via navigatie
-  [ ] Dashboard toont omzet, covers, lage voorraad, verzonden emails
-  [ ] GitHub Actions workflow aangemaakt voor dagelijkse forecast e-mail
-  [ ] Lage-voorraad alert getest bij closing (e-mail of log-bewijs)
+----------------------------------------------------------------
+STOP CONDITIE FASE A6
+----------------------------------------------------------------
+Fase A6 is klaar wanneer ALLE punten groen zijn:
+
+  [ ] supabase_migration_v13_audit_log.sql aangemaakt
+  [ ] Migratie uitgevoerd in Supabase (bewijs: tabel bestaat)
+  [ ] log_audit_event() in db.py aangemaakt
+  [ ] Login events worden gelogd
+  [ ] Minimaal 3 kernacties worden gelogd (sluiting, bestelling, gebruiker)
+  [ ] GitHub Actions workflow aangemaakt voor wekelijkse audit e-mail
   [ ] Commit + push naar main
 
 ----------------------------------------------------------------
 FASE-AFSLUITING PROTOCOL (ALTIJD UITVOEREN NA STOP CONDITIE)
 ----------------------------------------------------------------
 Wanneer alle stop-conditie punten groen zijn, voer dan VERPLICHT
-de volgende drie acties uit in deze volgorde:
+de volgende acties uit:
 
 1. HERSCHRIJF DIT BESTAND (MASTER_PROMPT_AUDIT.md):
-   - Markeer A5 als ✅ DONE
-   - Vervang de ACTIEVE FASE sectie door FASE A6 inhoud
+   - Markeer A6 als ✅ DONE
+   - Voeg sectie "AUDIT AFGEROND" toe — alle 6 fases compleet
 
 2. UPDATE PRIMER (C:\Users\MSI\.claude\primer.md):
-   - A5 Dashboard + notif.: ✅ DONE ([datum])
-   - A6 Audit logs: 🔄 ACTIEF
+   - A6 Audit logs: ✅ DONE ([datum])
+   - Audit actieplan: VOLLEDIG AFGEROND
 
 3. UPDATE MEMORY:
    C:\Users\MSI\.claude\projects\c--Users-MSI-Documents-AI-PROJECTEN\memory\audit_voortgang.md
 
 4. ZEG TEGEN ARIS:
-   "✅ Fase A5 afgerond. MASTER_PROMPT_AUDIT.md is bijgewerkt naar A6.
-    Kopieer het bestand in een nieuwe chat om verder te gaan."
-
-================================================================
-FASE A6 (GLOBAAL)
-================================================================
-Doel: Elke actie is traceerbaar. Wekelijkse audit per restaurant.
-Onderdelen:
-  - audit_log tabel (wie, wat, wanneer, tenant)
-  - Login events loggen
-  - Wekelijkse audit e-mail per tenant (GitHub Actions)
-  - Alert bij failures met root cause
+   "✅ Fase A6 afgerond. Alle 6 auditfases zijn nu compleet.
+    De besteltool is productie-gereed."
 
 ================================================================
 EINDE MASTER PROMPT AUDIT
