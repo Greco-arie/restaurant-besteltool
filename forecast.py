@@ -4,6 +4,7 @@ from datetime import date
 import pandas as pd
 import learning
 import weather
+from models import ForecastResult, WeatherData
 
 WEEKDAGEN = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 
@@ -105,7 +106,7 @@ def bereken_forecast(
     datum_morgen:     date,
     tenant_id:        str = "",
     manager_override: int | None = None,
-) -> dict:
+) -> ForecastResult:
     weekdag_morgen = datum_morgen.weekday()
 
     baseline     = bereken_baseline(df_history, weekdag_morgen,
@@ -165,27 +166,27 @@ def bereken_forecast(
     if bijzonderheden.strip():
         drivers.append(f"Notitie manager: {bijzonderheden.strip()}")
 
-    return {
-        "datum_morgen":      datum_morgen,
-        "weekdag_morgen":    weekdag_morgen,
-        "forecast_covers":   forecast_covers,
-        "forecast_omzet":    forecast_omzet,
-        "confidence":        confidence,
-        "drivers":           drivers,
-        "baseline":          baseline,
-        "trend_factor":      trend_factor,
-        "res_factor":        res_factor,
-        "covers_mult":       covers_mult,
-        "fries_mult":        fries_mult,
-        "desserts_mult":     desserts_mult,
-        "event_naam":        event_naam,
-        "event_type":        event_type,
-        "platters_25":       platters_25,
-        "platters_50":       platters_50,
-        "override_actief":   override_actief,
-        "correctie_factor":  correctie_factor,
-        "correctie_uitleg":  correctie_uitleg,
-        "terras_factor":     terras_factor,
-        "drinks_factor":     drinks_factor,
-        "weer":              weer,
-    }
+    return ForecastResult(
+        datum_morgen     = datum_morgen,
+        weekdag_morgen   = weekdag_morgen,
+        forecast_covers  = forecast_covers,
+        forecast_omzet   = forecast_omzet,
+        confidence       = confidence,
+        drivers          = drivers,
+        baseline         = baseline,
+        trend_factor     = trend_factor,
+        res_factor       = res_factor,
+        covers_mult      = covers_mult,
+        fries_mult       = fries_mult,
+        desserts_mult    = desserts_mult,
+        event_naam       = event_naam,
+        event_type       = event_type,
+        platters_25      = platters_25,
+        platters_50      = platters_50,
+        override_actief  = override_actief,
+        correctie_factor = correctie_factor,
+        correctie_uitleg = correctie_uitleg,
+        terras_factor    = terras_factor,
+        drinks_factor    = drinks_factor,
+        weer             = WeatherData.model_validate(weer),
+    )

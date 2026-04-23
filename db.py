@@ -2,6 +2,7 @@
 from __future__ import annotations
 import streamlit as st
 from supabase import create_client, Client
+from models import SupplierData, UserSession
 
 
 @st.cache_resource
@@ -83,44 +84,6 @@ def maak_gebruiker_aan(
         return False
 
 
-def laad_leverancier_config(tenant_id: str) -> dict[str, dict]:
-    """
-    Geeft een dict terug: leverancier_naam → {email, aanhef}.
-    Valt terug op lege waarden als de tabel nog niet bestaat of leeg is.
-    """
-    try:
-        resp = (
-            get_client()
-            .table("leverancier_config")
-            .select("leverancier, email, aanhef")
-            .eq("tenant_id", tenant_id)
-            .execute()
-        )
-        return {
-            row["leverancier"]: {"email": row["email"], "aanhef": row["aanhef"]}
-            for row in (resp.data or [])
-        }
-    except Exception:
-        return {}
-
-
-def sla_leverancier_config_op(
-    tenant_id: str, leverancier: str, email: str, aanhef: str
-) -> bool:
-    """Sla e-mail en aanhef op voor een leverancier. True als gelukt."""
-    try:
-        get_client().table("leverancier_config").upsert({
-            "tenant_id":   tenant_id,
-            "leverancier": leverancier,
-            "email":       email.strip(),
-            "aanhef":      aanhef.strip(),
-            "updated_at":  "now()",
-        }, on_conflict="tenant_id,leverancier").execute()
-        return True
-    except Exception:
-        return False
-
-
 def verwijder_gebruiker(user_id: str) -> tuple[bool, str]:
     """Verwijder een gebruiker op basis van ID. Geeft (True, '') of (False, foutmelding)."""
     try:
@@ -171,15 +134,19 @@ def update_tenant(tenant_id: str, name: str) -> tuple[bool, str]:
         return False, str(e)
 
 
-def verificeer_gebruiker(username: str, password: str) -> dict | None:
+def verificeer_gebruiker(tenant_slug: str, username: str, password: str) -> dict | None:
     """
-    Verifieer inloggegevens via pgcrypto crypt() — wachtwoorden zijn bcrypt-gehasht.
+    Verifieer inloggegevens via pgcrypto crypt() — bcrypt-gehasht, tenant-scoped.
     Geeft dict terug met tenant_id, tenant_naam, username, role, permissions — of None als mislukt.
     """
     try:
         resp = get_client().rpc(
             "verificeer_login",
-            {"p_username": username, "p_password": password},
+            {
+                "p_tenant_slug": tenant_slug,
+                "p_username":    username,
+                "p_password":    password,
+            },
         ).execute()
         if resp.data:
             user = resp.data[0]
@@ -309,3 +276,140 @@ def update_gebruiker_rechten(user_id: str, rechten: dict) -> bool:
         return True
     except Exception:
         return False
+
+
+# ── Verzendhistorie ────────────────────────────────────────────────────────
+
+def sla_verzonden_email_op(
+    tenant_id:     str,
+    supplier_naam: str,
+    bestel_datum:  str,
+    resend_id:     str,
+    supplier_id:   str | None = None,
+) -> bool:
+    """Sla een verzonden bestelling op in sent_emails. True als gelukt."""
+    try:
+        get_client().table("sent_emails").insert({
+            "tenant_id":     tenant_id,
+            "supplier_id":   supplier_id,
+            "supplier_naam": supplier_naam,
+            "bestel_datum":  bestel_datum,
+            "resend_id":     resend_id,
+            "status":        "sent",
+        }).execute()
+        return True
+    except Exception:
+        return False
+
+
+def laad_verzonden_emails(tenant_id: str, limit: int = 50) -> list[dict]:
+    """Geeft de laatste verzonden bestellingen terug voor een tenant."""
+    try:
+        resp = (
+            get_client()
+            .table("sent_emails")
+            .select("supplier_naam, bestel_datum, resend_id, status, timestamp")
+            .eq("tenant_id", tenant_id)
+            .order("timestamp", desc=True)
+            .limit(limit)
+            .execute()
+        )
+        return resp.data or []
+    except Exception:
+        return []
+
+
+# ── Producten ─────────────────────────────────────────────────────────────
+
+_SUPPLIER_NAMEN: dict[str, str] = {
+    "wholesale": "Hanos",
+    "fresh":     "Vers Leverancier",
+    "bakery":    "Bakkersland",
+    "beer":      "Heineken Distrib.",
+}
+
+
+def laad_producten(tenant_id: str) -> list[dict]:
+    """
+    Geeft alle actieve producten voor de tenant als lijst van dicts.
+    Kolommen matchen de legacy CSV-structuur: id (=sku_id), naam, eenheid,
+    verpakkingseenheid, vraag_per_cover, minimumvoorraad, buffer_pct, leverancier, actief.
+    """
+    try:
+        resp = (
+            get_client()
+            .table("products")
+            .select("sku_id, naam, eenheid, verpakkingseenheid, vraag_per_cover, "
+                    "minimumvoorraad, buffer_pct, is_actief, suppliers(name)")
+            .eq("tenant_id", tenant_id)
+            .eq("is_actief", True)
+            .order("sku_id")
+            .execute()
+        )
+        rows = []
+        for p in (resp.data or []):
+            supplier_naam = (p.get("suppliers") or {}).get("name", "Overig")
+            rows.append({
+                "id":                 p["sku_id"],
+                "naam":               p["naam"],
+                "eenheid":            p["eenheid"],
+                "verpakkingseenheid": float(p["verpakkingseenheid"]),
+                "vraag_per_cover":    float(p["vraag_per_cover"]),
+                "minimumvoorraad":    float(p["minimumvoorraad"]),
+                "buffer_pct":         float(p["buffer_pct"]),
+                "leverancier":        supplier_naam,
+                "actief":             p["is_actief"],
+            })
+        return rows
+    except Exception:
+        return []
+
+
+def sla_product_op(
+    tenant_id:          str,
+    sku_id:             str,
+    naam:               str,
+    eenheid:            str,
+    verpakkingseenheid: float,
+    vraag_per_cover:    float,
+    minimumvoorraad:    float,
+    buffer_pct:         float,
+    supplier_id:        str | None = None,
+) -> tuple[bool, str]:
+    """Upsert een product voor de tenant. Geeft (True, '') of (False, foutmelding)."""
+    try:
+        get_client().table("products").upsert({
+            "tenant_id":          tenant_id,
+            "sku_id":             sku_id,
+            "naam":               naam,
+            "eenheid":            eenheid,
+            "verpakkingseenheid": verpakkingseenheid,
+            "vraag_per_cover":    vraag_per_cover,
+            "minimumvoorraad":    minimumvoorraad,
+            "buffer_pct":         buffer_pct,
+            "supplier_id":        supplier_id,
+            "is_actief":          True,
+        }, on_conflict="tenant_id,sku_id").execute()
+        return True, ""
+    except Exception as e:
+        return False, str(e)
+
+
+# ── Typed wrappers (Pydantic v2) — gebruik deze voor nieuwe code ──────────
+
+def verificeer_gebruiker_typed(tenant_slug: str, username: str, password: str) -> UserSession | None:
+    """Typed versie van verificeer_gebruiker — geeft UserSession of None."""
+    raw = verificeer_gebruiker(tenant_slug, username, password)
+    if raw is None:
+        return None
+    return UserSession.model_validate(raw)
+
+
+def laad_leveranciers_typed(tenant_id: str) -> list[SupplierData]:
+    """Typed versie van laad_leveranciers — geeft list[SupplierData]."""
+    return [SupplierData.model_validate(row) for row in laad_leveranciers(tenant_id)]
+
+
+def laad_leveranciers_dict_typed(tenant_id: str) -> dict[str, SupplierData]:
+    """Typed versie van laad_leveranciers_dict — geeft dict[naam → SupplierData]."""
+    return {s.name: s for s in laad_leveranciers_typed(tenant_id)}

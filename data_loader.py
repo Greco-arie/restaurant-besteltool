@@ -6,53 +6,12 @@ import db
 
 DEMO_DIR = Path(__file__).parent / "demo_data"
 
-SUPPLIER_NAMEN = {
-    "wholesale": "Hanos",
-    "fresh":     "Vers Leverancier",
-    "bakery":    "Bakkersland",
-    "beer":      "Heineken Distrib.",
-}
-
-SUPPLIER_CONFIG: dict[str, dict] = {
-    "Hanos": {
-        "email":  "inkoop@hanos.nl",
-        "aanhef": "Beste Hanos,",
-    },
-    "Vers Leverancier": {
-        "email":  "orders@versleverancier.nl",
-        "aanhef": "Beste leverancier,",
-    },
-    "Bakkersland": {
-        "email":  "orders@bakkersland.nl",
-        "aanhef": "Beste Bakkersland,",
-    },
-    "Heineken Distrib.": {
-        "email":  "orders@heineken.nl",
-        "aanhef": "Beste Heineken,",
-    },
-}
-
 FRIES_SKUS   = {"SKU-001", "SKU-002"}
 DESSERT_SKUS = {"SKU-027", "SKU-028"}
 DRINKS_SKUS  = {"SKU-029", "SKU-030"}
 
 
 # ── Statische CSV data (niet tenant-specifiek) ────────────────────────────
-
-def load_products() -> pd.DataFrame:
-    df = pd.read_csv(DEMO_DIR / "products.csv")
-    df = df.rename(columns={
-        "sku_id":           "id",
-        "sku_name":         "naam",
-        "base_unit":        "eenheid",
-        "pack_qty":         "verpakkingseenheid",
-        "demand_per_cover": "vraag_per_cover",
-        "min_stock":        "minimumvoorraad",
-    })
-    df["leverancier"] = df["supplier_type"].map(SUPPLIER_NAMEN).fillna("Overig")
-    df["actief"] = 1
-    return df.reset_index(drop=True)
-
 
 def load_events() -> pd.DataFrame:
     df = pd.read_csv(DEMO_DIR / "events.csv", parse_dates=["date"])
@@ -115,10 +74,7 @@ def sla_dag_op(
 # ── Supabase: voorraad (tenant-aware) ────────────────────────────────────
 
 def load_stock_count(tenant_id: str) -> pd.DataFrame:
-    """
-    Laad meest recente voorraadtelling voor de opgegeven tenant.
-    Fallback naar demo_data CSV als database leeg is.
-    """
+    """Laad meest recente voorraadtelling voor de opgegeven tenant."""
     try:
         sb = db.get_client()
         latest = (
@@ -130,7 +86,7 @@ def load_stock_count(tenant_id: str) -> pd.DataFrame:
             .execute()
         )
         if not latest.data:
-            return _load_stock_count_csv()
+            return pd.DataFrame(columns=["product_id", "hoeveelheid"])
 
         resp = (
             sb.table("stock_count")
@@ -140,24 +96,13 @@ def load_stock_count(tenant_id: str) -> pd.DataFrame:
             .execute()
         )
         if not resp.data:
-            return _load_stock_count_csv()
+            return pd.DataFrame(columns=["product_id", "hoeveelheid"])
 
         df = pd.DataFrame(resp.data)
         df = df.rename(columns={"sku_id": "product_id", "on_hand_qty": "hoeveelheid"})
         return df[["product_id", "hoeveelheid"]].reset_index(drop=True)
     except Exception:
-        return _load_stock_count_csv()
-
-
-def _load_stock_count_csv() -> pd.DataFrame:
-    pad = DEMO_DIR / "stock_count.csv"
-    if not pad.exists():
         return pd.DataFrame(columns=["product_id", "hoeveelheid"])
-    df = pd.read_csv(pad, parse_dates=["date"])
-    df = df.rename(columns={"date": "datum", "sku_id": "product_id", "on_hand_qty": "hoeveelheid"})
-    if df.empty:
-        return pd.DataFrame(columns=["product_id", "hoeveelheid"])
-    return df[df["datum"] == df["datum"].max()][["product_id", "hoeveelheid"]].reset_index(drop=True)
 
 
 def sla_stock_op(tenant_id: str, datum: date, df_stock: pd.DataFrame) -> None:
@@ -181,36 +126,3 @@ def sla_stock_op(tenant_id: str, datum: date, df_stock: pd.DataFrame) -> None:
     ).execute()
 
 
-# ── E-mail ────────────────────────────────────────────────────────────────
-
-def genereer_mailto(
-    leverancier:     str,
-    df_lev:          pd.DataFrame,
-    bestel_datum:    str,
-    config_override: dict | None = None,
-) -> str:
-    """
-    Bouwt een mailto:-URL voor de opgegeven leverancier.
-    config_override: dict van de vorm {"email": "...", "aanhef": "..."}.
-    Als None, valt terug op de hardcoded SUPPLIER_CONFIG defaults.
-    """
-    import urllib.parse
-    fallback = SUPPLIER_CONFIG.get(leverancier, {"email": "", "aanhef": "Beste leverancier,"})
-    cfg    = config_override if config_override else fallback
-    email  = cfg.get("email",  fallback["email"])
-    aanhef = cfg.get("aanhef", fallback["aanhef"])
-
-    onderwerp = f"Bestelling — {leverancier} — {bestel_datum}"
-    regels = "\n".join(
-        f"  - {row['naam']}: {int(row['besteladvies'])} {row['eenheid']}"
-        for _, row in df_lev.iterrows()
-    )
-    body = (
-        f"{aanhef}\n\n"
-        f"Hierbij onze bestelling voor levering op {bestel_datum}:\n\n"
-        f"{regels}\n\n"
-        f"Graag bevestiging van ontvangst.\n\n"
-        f"Met vriendelijke groet,\n"
-        f"Restaurant besteltool"
-    )
-    return f"mailto:{email}?subject={urllib.parse.quote(onderwerp)}&body={urllib.parse.quote(body)}"

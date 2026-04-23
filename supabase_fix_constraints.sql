@@ -1,51 +1,31 @@
 -- ============================================================
--- Restaurant Besteltool — Fix: unique constraints naar multi-tenant
--- Voer dit EENMALIG uit in de Supabase SQL editor
+-- Restaurant Besteltool — Migration V2.1: Constraints multi-tenant
+-- Voer dit EENMALIG uit na Migration V2
 -- ============================================================
 
--- 1. sales_history: was UNIQUE(date), moet UNIQUE(date, tenant_id)
-alter table sales_history
-  drop constraint if exists sales_history_date_unique;
+-- 1. sales_history: UNIQUE(date) → UNIQUE(date, tenant_id)
+ALTER TABLE sales_history
+  DROP CONSTRAINT IF EXISTS sales_history_date_unique;
+ALTER TABLE sales_history
+  ADD CONSTRAINT sales_history_date_tenant_unique UNIQUE (date, tenant_id);
 
-alter table sales_history
-  add constraint sales_history_date_tenant_unique unique (date, tenant_id);
+-- 2. stock_count: UNIQUE(date, sku_id) → UNIQUE(date, sku_id, tenant_id)
+ALTER TABLE stock_count
+  DROP CONSTRAINT IF EXISTS stock_count_date_sku_unique;
+ALTER TABLE stock_count
+  ADD CONSTRAINT stock_count_date_sku_tenant_unique UNIQUE (date, sku_id, tenant_id);
 
--- 2. stock_count: was UNIQUE(date, sku_id), moet UNIQUE(date, sku_id, tenant_id)
-alter table stock_count
-  drop constraint if exists stock_count_date_sku_unique;
+-- 3. forecast_log: UNIQUE(datum) → UNIQUE(datum, tenant_id)
+ALTER TABLE forecast_log
+  DROP CONSTRAINT IF EXISTS forecast_log_datum_unique;
+ALTER TABLE forecast_log
+  ADD CONSTRAINT forecast_log_datum_tenant_unique UNIQUE (datum, tenant_id);
 
-alter table stock_count
-  add constraint stock_count_date_sku_tenant_unique unique (date, sku_id, tenant_id);
-
--- 3. forecast_log: was UNIQUE(datum), moet UNIQUE(datum, tenant_id)
-alter table forecast_log
-  drop constraint if exists forecast_log_datum_unique;
-
-alter table forecast_log
-  add constraint forecast_log_datum_tenant_unique unique (datum, tenant_id);
-
--- Klaar. Alle drie tabellen accepteren nu meerdere tenants per datum.
-
--- ============================================================
--- 4. Leverancier-configuratie per tenant (e-mailadressen etc.)
--- ============================================================
-create table if not exists leverancier_config (
-  id          bigint generated always as identity primary key,
-  tenant_id   uuid not null references tenants(id) on delete cascade,
-  leverancier text not null,
-  email       text not null default '',
-  aanhef      text not null default 'Beste leverancier,',
-  updated_at  timestamptz default now(),
-  constraint  leverancier_config_tenant_lev unique (tenant_id, leverancier)
-);
-
-alter table leverancier_config disable row level security;
-
--- Seed voor Family Maarssen
-insert into leverancier_config (tenant_id, leverancier, email, aanhef)
-values
-  ('11111111-1111-1111-1111-111111111111', 'Hanos',             'inkoop@hanos.nl',           'Beste Hanos,'),
-  ('11111111-1111-1111-1111-111111111111', 'Vers Leverancier',  'orders@versleverancier.nl', 'Beste leverancier,'),
-  ('11111111-1111-1111-1111-111111111111', 'Bakkersland',       'orders@bakkersland.nl',     'Beste Bakkersland,'),
-  ('11111111-1111-1111-1111-111111111111', 'Heineken Distrib.', 'orders@heineken.nl',        'Beste Heineken,')
-on conflict (tenant_id, leverancier) do nothing;
+-- 4. tenant_users: username was globaal UNIQUE — moet per tenant zijn
+--    Zonder deze fix: tweede klant kan geen 'manager' aanmaken want die bestaat al
+ALTER TABLE tenant_users
+  DROP CONSTRAINT IF EXISTS tenant_users_username_key;
+ALTER TABLE tenant_users
+  DROP CONSTRAINT IF EXISTS tenant_users_tenant_username_unique;
+ALTER TABLE tenant_users
+  ADD CONSTRAINT tenant_users_tenant_username_unique UNIQUE (tenant_id, username);

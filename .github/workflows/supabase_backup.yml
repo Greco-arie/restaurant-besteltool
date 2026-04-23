@@ -1,0 +1,146 @@
+name: Dagelijkse Supabase backup → Backblaze B2
+
+# Dagelijks om 03:00 UTC (05:00 Nederlandse wintertijd / 04:00 zomertijd)
+on:
+  schedule:
+    - cron: "0 3 * * *"
+  workflow_dispatch:   # ook handmatig te triggeren via GitHub UI
+
+jobs:
+  backup:
+    name: pg_dump → GPG versleuteld → B2 upload
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      # ── 1. PostgreSQL client installeren ──────────────────────────────────
+      - name: Installeer postgresql-client
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y postgresql-client gnupg
+
+      # ── 2. pg_dump uitvoeren ───────────────────────────────────────────────
+      - name: Dump database
+        env:
+          PGPASSWORD: ${{ secrets.SUPABASE_DB_PASSWORD }}
+        run: |
+          DATUM=$(date +%Y-%m-%d)
+          DUMP_FILE="backup_${DATUM}.sql"
+
+          pg_dump \
+            --host="${{ secrets.SUPABASE_DB_HOST }}" \
+            --port=5432 \
+            --username="${{ secrets.SUPABASE_DB_USER }}" \
+            --dbname="${{ secrets.SUPABASE_DB_NAME }}" \
+            --no-password \
+            --format=custom \
+            --file="${DUMP_FILE}"
+
+          echo "DUMP_FILE=${DUMP_FILE}" >> $GITHUB_ENV
+          echo "DATUM=${DATUM}"         >> $GITHUB_ENV
+
+          # Controleer of de dump niet leeg is (minimaal 1 KB)
+          SIZE=$(stat -c%s "${DUMP_FILE}")
+          echo "Dump grootte: ${SIZE} bytes"
+          if [ "$SIZE" -lt 1024 ]; then
+            echo "FOUT: dump lijkt leeg (${SIZE} bytes)"
+            exit 1
+          fi
+
+      # ── 3. GPG-versleuteling ───────────────────────────────────────────────
+      - name: Versleutel dump met GPG
+        env:
+          GPG_PASSPHRASE: ${{ secrets.BACKUP_GPG_PASSPHRASE }}
+        run: |
+          gpg --batch \
+              --symmetric \
+              --cipher-algo AES256 \
+              --passphrase "${GPG_PASSPHRASE}" \
+              --output "${DUMP_FILE}.gpg" \
+              "${DUMP_FILE}"
+
+          # Originele plaintext dump direct verwijderen
+          rm -f "${DUMP_FILE}"
+          echo "ENCRYPTED_FILE=${DUMP_FILE}.gpg" >> $GITHUB_ENV
+
+      # ── 4. Upload naar Backblaze B2 (S3-compatible API) ──────────────────
+      - name: Installeer AWS CLI (voor B2 S3 endpoint)
+        run: pip install awscli --quiet
+
+      - name: Upload naar Backblaze B2
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.B2_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET:             ${{ secrets.B2_BUCKET_NAME }}
+          B2_ENDPOINT:           ${{ secrets.B2_ENDPOINT }}   # bijv. https://s3.eu-central-003.backblazeb2.com
+        run: |
+          aws s3 cp "${ENCRYPTED_FILE}" \
+            "s3://${B2_BUCKET}/backups/${ENCRYPTED_FILE}" \
+            --endpoint-url "${B2_ENDPOINT}" \
+            --no-progress
+
+          echo "Upload geslaagd: s3://${B2_BUCKET}/backups/${ENCRYPTED_FILE}"
+
+      # ── 5. Retentie: verwijder backups ouder dan 30 dagen ─────────────────
+      - name: Verwijder backups ouder dan 30 dagen
+        env:
+          AWS_ACCESS_KEY_ID:     ${{ secrets.B2_KEY_ID }}
+          AWS_SECRET_ACCESS_KEY: ${{ secrets.B2_APPLICATION_KEY }}
+          B2_BUCKET:             ${{ secrets.B2_BUCKET_NAME }}
+          B2_ENDPOINT:           ${{ secrets.B2_ENDPOINT }}
+        run: |
+          CUTOFF=$(date -d "30 days ago" +%Y-%m-%d)
+
+          aws s3 ls "s3://${B2_BUCKET}/backups/" \
+              --endpoint-url "${B2_ENDPOINT}" | \
+          awk '{print $4}' | \
+          while read FILE; do
+            # Bestandsnaam: backup_YYYY-MM-DD.sql.gpg
+            FILEDATE=$(echo "$FILE" | grep -oP '\d{4}-\d{2}-\d{2}' | head -1)
+            if [[ -n "$FILEDATE" && "$FILEDATE" < "$CUTOFF" ]]; then
+              echo "Verwijder oud bestand: ${FILE}"
+              aws s3 rm "s3://${B2_BUCKET}/backups/${FILE}" \
+                --endpoint-url "${B2_ENDPOINT}"
+            fi
+          done
+
+      # ── 6. Samenvattend log ───────────────────────────────────────────────
+      - name: Samenvatting
+        run: |
+          echo "✅ Backup voltooid: ${ENCRYPTED_FILE}"
+          echo "📅 Datum: ${DATUM}"
+          echo "🔐 Versleuteld met AES-256 GPG"
+          echo "☁️  Geüpload naar Backblaze B2"
+          echo "🗑️  Backups ouder dan 30 dagen verwijderd"
+
+# ============================================================
+# RESTORE-INSTRUCTIES (voer lokaal uit na een incident)
+#
+# Stap 1 — Download backup van Backblaze B2
+#   aws s3 cp \
+#     "s3://besteltool-backups/backups/backup_YYYY-MM-DD.sql.gpg" \
+#     backup_YYYY-MM-DD.sql.gpg \
+#     --endpoint-url "https://s3.eu-central-003.backblazeb2.com"
+#
+# Stap 2 — Ontsleutel met GPG (vereist BACKUP_GPG_PASSPHRASE uit wachtwoordmanager)
+#   gpg --batch \
+#       --passphrase "JOUW_GPG_WACHTWOORD" \
+#       --decrypt backup_YYYY-MM-DD.sql.gpg \
+#       > backup_YYYY-MM-DD.sql
+#
+# Stap 3 — Herstel op een (lege) PostgreSQL database
+#   pg_restore \
+#     --host=db.xxxxxxxxxxxxxxxxxxxx.supabase.co \
+#     --port=5432 \
+#     --username=postgres \
+#     --dbname=postgres \
+#     --no-password \
+#     backup_YYYY-MM-DD.sql
+#   (PGPASSWORD=... als omgevingsvariabele meegeven)
+#
+# Stap 4 — Verwijder de plaintext dump direct na herstel
+#   rm -f backup_YYYY-MM-DD.sql
+#
+# LET OP: pg_restore overschrijft bestaande data niet automatisch.
+#   Gebruik --clean --if-exists voor een volledige reset.
+# ============================================================
