@@ -22,6 +22,7 @@ def _genereer_pdf(
     df_lev: pd.DataFrame,
     bestel_datum: str,
     aanhef: str,
+    restaurant_naam: str = "Restaurant Besteltool",
 ) -> bytes:
     """Genereer een simpele PDF-bestelbon. Geeft de raw bytes terug."""
     from reportlab.lib.pagesizes import A4
@@ -85,7 +86,7 @@ def _genereer_pdf(
     story.append(Spacer(1, 0.8 * cm))
     story.append(Paragraph("Graag bevestiging van ontvangst.", body))
     story.append(Spacer(1, 0.3 * cm))
-    story.append(Paragraph("Met vriendelijke groet,<br/>Restaurant Besteltool", body))
+    story.append(Paragraph(f"Met vriendelijke groet,<br/>{restaurant_naam}", body))
 
     doc.build(story)
     return buffer.getvalue()
@@ -98,6 +99,7 @@ def _genereer_html_body(
     df_lev: pd.DataFrame,
     bestel_datum: str,
     aanhef: str,
+    restaurant_naam: str = "Restaurant Besteltool",
 ) -> str:
     col_naam    = "naam"        if "naam"        in df_lev.columns else df_lev.columns[0]
     col_eenheid = "eenheid"     if "eenheid"     in df_lev.columns else ""
@@ -126,7 +128,7 @@ def _genereer_html_body(
   <tbody>{rijen}</tbody>
 </table>
 <p style="margin-top:24px">Graag bevestiging van ontvangst.</p>
-<p>Met vriendelijke groet,<br/><strong>Restaurant Besteltool</strong></p>
+<p>Met vriendelijke groet,<br/><strong>{restaurant_naam}</strong></p>
 </body></html>
 """
 
@@ -140,6 +142,7 @@ def verzend_bestelling(
     lev_config:     dict,
     tenant_slug:    str,
     manager_email:  str | None = None,
+    restaurant_naam: str | None = None,
 ) -> tuple[bool, str]:
     """
     Verzend de bestelling als e-mail via Resend.
@@ -174,17 +177,18 @@ def verzend_bestelling(
         return False, f"Geen e-mailadres geconfigureerd voor {leverancier}"
 
     aanhef       = lev_config.get("aanhef", "Beste leverancier,")
+    naam_afzender = restaurant_naam or tenant_slug
     afzender     = "onboarding@resend.dev"  # TODO: vervang door f"no-reply@{tenant_slug}.besteltool.nl" na domeinverificatie
     onderwerp    = f"Bestelling – {leverancier} – {bestel_datum}"
 
     # PDF als bijlage
     try:
-        pdf_bytes = _genereer_pdf(leverancier, df_lev, bestel_datum, aanhef)
+        pdf_bytes = _genereer_pdf(leverancier, df_lev, bestel_datum, aanhef, naam_afzender)
     except Exception as pdf_err:
         logger.warning("PDF generatie mislukt, verzend zonder bijlage: %s", pdf_err)
         pdf_bytes = None
 
-    html_body = _genereer_html_body(leverancier, df_lev, bestel_datum, aanhef)
+    html_body = _genereer_html_body(leverancier, df_lev, bestel_datum, aanhef, naam_afzender)
 
     params: dict = {
         "from":    afzender,

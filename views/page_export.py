@@ -72,19 +72,21 @@ def render() -> None:
                         key=send_key,
                         use_container_width=True,
                     ):
-                        manager_email = st.session_state.get("user_email") or None
-                        tenant_slug   = st.session_state.get("tenant_slug", "restaurant")
+                        manager_email   = st.session_state.get("user_email") or None
+                        tenant_slug     = st.session_state.get("tenant_slug", "restaurant")
+                        restaurant_naam = st.session_state.get("tenant_naam") or tenant_slug
                         with st.spinner(f"E-mail versturen naar {lev}..."):
                             ok, resultaat = mail.verzend_bestelling(
-                                leverancier   = lev,
-                                df_lev        = df_lev,
-                                bestel_datum  = datum,
-                                lev_config    = cfg_lev,
-                                tenant_slug   = tenant_slug,
-                                manager_email = manager_email,
+                                leverancier     = lev,
+                                df_lev          = df_lev,
+                                bestel_datum    = datum,
+                                lev_config      = cfg_lev,
+                                tenant_slug     = tenant_slug,
+                                manager_email   = manager_email,
+                                restaurant_naam = restaurant_naam,
                             )
                         if ok:
-                            st.success(f"Bestelling verzonden naar {lev_email} (id: {resultaat})")
+                            st.success(f"Bestelling verzonden naar {lev} ({lev_email})")
                             monitoring.log_event(
                                 "bestelling_verzonden",
                                 leverancier=lev,
