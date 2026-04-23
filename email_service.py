@@ -169,12 +169,12 @@ def verzend_bestelling(
 
     resend.api_key = api_key
 
-    to_email = lev_config.get("email", "").strip()
+    to_email = "arisverkerk@gmail.com"  # TODO: vervang door lev_config.get("email", "").strip() na rooktest
     if not to_email:
         return False, f"Geen e-mailadres geconfigureerd voor {leverancier}"
 
     aanhef       = lev_config.get("aanhef", "Beste leverancier,")
-    afzender     = f"no-reply@{tenant_slug}.besteltool.nl"
+    afzender     = "onboarding@resend.dev"  # TODO: vervang door f"no-reply@{tenant_slug}.besteltool.nl" na domeinverificatie
     onderwerp    = f"Bestelling – {leverancier} – {bestel_datum}"
 
     # PDF als bijlage
