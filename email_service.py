@@ -172,13 +172,19 @@ def verzend_bestelling(
 
     resend.api_key = api_key
 
-    to_email = "arisverkerk@gmail.com"  # TODO: vervang door lev_config.get("email", "").strip() na rooktest
+    to_email = lev_config.get("email", "").strip()
     if not to_email:
         return False, f"Geen e-mailadres geconfigureerd voor {leverancier}"
 
-    aanhef       = lev_config.get("aanhef", "Beste leverancier,")
+    aanhef        = lev_config.get("aanhef", "Beste leverancier,")
     naam_afzender = restaurant_naam or tenant_slug
-    afzender     = "onboarding@resend.dev"  # TODO: vervang door f"no-reply@{tenant_slug}.besteltool.nl" na domeinverificatie
+    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
+    if _domein_geverifieerd:
+        afzender = f"no-reply@{tenant_slug}.besteltool.nl"
+    else:
+        afzender = "onboarding@resend.dev"
+        logger.warning("resend_sandbox_afzender",
+                       extra={"reden": "RESEND_DOMEIN_GEVERIFIEERD niet ingesteld"})
     onderwerp    = f"Bestelling – {leverancier} – {bestel_datum}"
 
     # PDF als bijlage

@@ -1,5 +1,6 @@
 """Typed accessors voor st.session_state — fundament voor views/ split."""
 from __future__ import annotations
+import time
 from typing import Optional
 import streamlit as st
 from models import UserSession, ClosingData
@@ -19,6 +20,7 @@ def get_user() -> Optional[UserSession]:
 
 def set_user(user: UserSession) -> None:
     st.session_state["user_session"] = user
+    st.session_state["_login_timestamp"] = time.time()
     # legacy keys bijhouden voor backward compat met app.py
     st.session_state["ingelogd"]    = True
     st.session_state["tenant_id"]   = user.tenant_id

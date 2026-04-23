@@ -1,11 +1,13 @@
 """Restaurant Forecast & Besteladvies — multi-tenant versie."""
 from __future__ import annotations
+import time
 from datetime import date, timedelta
 
 import pandas as pd
 import streamlit as st
 import streamlit.components.v1 as components
 
+import state
 import data_loader as dl
 import forecast as fc
 import recommendation as rc
@@ -299,13 +301,14 @@ def page_login() -> None:
                 return
             user = db.verificeer_gebruiker(tenant_slug.strip(), gebruiker, wachtwoord)
             if user:
-                st.session_state.ingelogd           = True
-                st.session_state.tenant_id          = user["tenant_id"]
-                st.session_state.tenant_naam        = user["tenant_naam"]
-                st.session_state.tenant_slug        = tenant_slug.strip()
-                st.session_state.user_naam          = user["username"]
-                st.session_state.user_rol           = user["role"]
-                st.session_state.user_permissions   = user.get("permissions", {})
+                st.session_state.ingelogd             = True
+                st.session_state.tenant_id            = user["tenant_id"]
+                st.session_state.tenant_naam          = user["tenant_naam"]
+                st.session_state.tenant_slug          = tenant_slug.strip()
+                st.session_state.user_naam            = user["username"]
+                st.session_state.user_rol             = user["role"]
+                st.session_state.user_permissions     = user.get("permissions", {})
+                st.session_state["_login_timestamp"]  = time.time()
                 st.rerun()
             else:
                 st.error("Restaurant, gebruikersnaam of wachtwoord klopt niet.")
@@ -397,6 +400,13 @@ def main() -> None:
     if not st.session_state.ingelogd:
         page_login()
         return
+
+    SESSION_MAX_SECONDEN = 8 * 60 * 60  # 8 uur
+    login_ts = st.session_state.get("_login_timestamp", 0)
+    if time.time() - login_ts > SESSION_MAX_SECONDEN:
+        state.clear_user()
+        st.warning("Je sessie is verlopen. Log opnieuw in.")
+        st.rerun()
 
     # Sentry context bijwerken bij elke render (paginawissel of herlaad)
     monitoring.stel_sentry_context_in(
