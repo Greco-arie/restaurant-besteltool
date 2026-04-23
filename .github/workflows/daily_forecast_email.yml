@@ -1,0 +1,28 @@
+name: Dagelijkse forecast e-mail
+
+on:
+  schedule:
+    - cron: "0 22 * * *"   # 22:00 UTC elke avond
+  workflow_dispatch:         # handmatig triggeren voor testen
+
+jobs:
+  stuur-forecast:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python instellen
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Dependencies installeren
+        run: pip install supabase resend
+
+      - name: Forecast e-mail versturen
+        env:
+          SUPABASE_URL:            ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:    ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RESEND_API_KEY:          ${{ secrets.RESEND_API_KEY }}
+          RESEND_DOMEIN_GEVERIFIEERD: ${{ secrets.RESEND_DOMEIN_GEVERIFIEERD }}
+        run: python scripts/stuur_forecast_email.py

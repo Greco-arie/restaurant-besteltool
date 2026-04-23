@@ -9,6 +9,8 @@ import data_loader as dl
 import learning
 import weather as wt
 import inventory as inv
+import db
+import email_service as mail
 from cache import (
     get_products, get_sales_history, get_events, get_stock_count,
     get_reservations, get_leveranciers_dict, toon_voltooid_overlay,
@@ -17,6 +19,53 @@ from cache import (
 PAGE_CLOSING  = "Dag afsluiten"
 PAGE_FORECAST = "Forecast"
 WEEKDAGEN     = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
+
+
+def _stuur_lage_voorraad_alert_indien_nodig(
+    tenant_id: str,
+    df_stock_nu: "pd.DataFrame",
+    df_producten: "pd.DataFrame",
+) -> None:
+    """Stuurt een lage-voorraad alert naar de manager als er producten onder minimum zitten."""
+    import pandas as pd
+    try:
+        stock_map = dict(zip(df_stock_nu["product_id"], df_stock_nu["hoeveelheid"].astype(float)))
+        lage = []
+        for _, prod in df_producten.iterrows():
+            huidige = stock_map.get(str(prod["id"]), 0.0)
+            if huidige < float(prod.get("minimumvoorraad", 0)):
+                lage.append({
+                    "naam":           prod["naam"],
+                    "current_stock":  huidige,
+                    "minimumvoorraad": float(prod.get("minimumvoorraad", 0)),
+                    "eenheid":        prod.get("eenheid", ""),
+                })
+        if not lage:
+            return
+
+        # Zoek manager-email in tenant_users
+        try:
+            resp = (
+                db.get_client()
+                .table("tenant_users")
+                .select("email")
+                .eq("tenant_id", tenant_id)
+                .in_("role", ["manager", "admin"])
+                .eq("is_active", True)
+                .execute()
+            )
+            emails = [r["email"] for r in (resp.data or []) if r.get("email")]
+        except Exception:
+            emails = []
+
+        if not emails:
+            return
+
+        tenant_naam = st.session_state.get("tenant_naam", "Restaurant")
+        for adres in emails:
+            mail.verzend_lage_voorraad_alert(adres, tenant_naam, lage)
+    except Exception:
+        pass  # Alert-fout mag de sluiting niet blokkeren
 
 
 def render() -> None:
@@ -231,6 +280,9 @@ def render() -> None:
         inv.log_theoretisch_verbruik(tenant_id, datum_vandaag, covers_int, df_producten)
         learning.log_forecast(tenant_id, datum_morgen, result.forecast_covers,
                                result.event_naam, bijzonderheden)
+
+        # Lage-voorraad alert naar manager (A5.3)
+        _stuur_lage_voorraad_alert_indien_nodig(tenant_id, df_stock_nu, df_producten)
 
         st.cache_data.clear()
 

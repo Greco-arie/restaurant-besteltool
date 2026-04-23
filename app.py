@@ -41,6 +41,7 @@ PAGE_PRODUCTEN    = "Producten & Leveranciers"
 PAGE_LEERRAPPORT  = "Leerrapport"
 PAGE_INSTELLINGEN = "Instellingen"   # Voor manager en admin: leveranciers + gebruikers
 PAGE_ADMIN        = "Beheer"         # Uitsluitend super_admin: cross-tenant klantbeheer
+PAGE_DASHBOARD    = "Dashboard"      # Manager totaaloverzicht
 
 WEEKDAGEN        = ["maandag", "dinsdag", "woensdag", "donderdag", "vrijdag", "zaterdag", "zondag"]
 CONFIDENCE_LABEL = {"hoog": "Hoog", "gemiddeld": "Gemiddeld", "laag": "Laag"}
@@ -49,9 +50,9 @@ CONFIDENCE_LABEL = {"hoog": "Hoog", "gemiddeld": "Gemiddeld", "laag": "Laag"}
 _PAGINAS_BASIS      = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT,
                        PAGE_INVENTARIS, PAGE_PRODUCTEN, PAGE_LEERRAPPORT]
 PAGINAS             = _PAGINAS_BASIS                                                 # user (read-only)
-PAGINAS_MANAGER     = _PAGINAS_BASIS + [PAGE_INSTELLINGEN]                           # manager
-PAGINAS_ADMIN       = _PAGINAS_BASIS + [PAGE_INSTELLINGEN]                           # admin (tenant-level)
-PAGINAS_SUPER_ADMIN = _PAGINAS_BASIS + [PAGE_INSTELLINGEN, PAGE_ADMIN]               # super_admin (platform-level)
+PAGINAS_MANAGER     = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN]        # manager
+PAGINAS_ADMIN       = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN]        # admin (tenant-level)
+PAGINAS_SUPER_ADMIN = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN, PAGE_ADMIN]  # super_admin
 
 
 def _nav_paginas() -> list[str]:
@@ -353,6 +354,9 @@ from views.page_instellingen import render as page_instellingen
 # ── Admin ────────────────────────────────────────────────────────────────
 from views.page_admin import render as page_admin
 
+# ── Dashboard ─────────────────────────────────────────────────────────────
+from views.page_dashboard import render as page_dashboard
+
 # ── Password reset ────────────────────────────────────────────────────────
 from views.page_password_reset import render_aanvraag as page_reset_aanvraag
 from views.page_password_reset import render_nieuw_wachtwoord as page_reset_nieuw
@@ -496,7 +500,9 @@ def main() -> None:
             st.rerun()
 
     scherm = st.session_state.pagina
-    if scherm == PAGE_CLOSING:
+    if scherm == PAGE_DASHBOARD:
+        page_dashboard()
+    elif scherm == PAGE_CLOSING:
         page_closing()
     elif scherm == PAGE_FORECAST:
         page_forecast()

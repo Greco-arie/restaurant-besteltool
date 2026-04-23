@@ -371,6 +371,67 @@ def verzend_welkomstmail(
         return False, str(e)
 
 
+# ── Lage voorraad alert ────────────────────────────────────────────────────
+
+def verzend_lage_voorraad_alert(
+    to_email:        str,
+    restaurant_naam: str,
+    producten:       list[dict],
+) -> tuple[bool, str]:
+    """
+    Stuur een lage-voorraad alert naar de manager na het opslaan van de sluitstock.
+
+    producten: lijst van dicts met keys naam, current_stock, minimumvoorraad, eenheid
+    """
+    try:
+        import resend  # type: ignore
+    except ImportError:
+        return False, "resend niet geïnstalleerd"
+
+    api_key = _lees_resend_key()
+    if not api_key:
+        return False, "RESEND_API_KEY niet ingesteld"
+    resend.api_key = api_key
+
+    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
+    afzender = "no-reply@besteltool.nl" if _domein_geverifieerd else "onboarding@resend.dev"
+
+    rijen = "".join(
+        f"<tr><td>{p['naam']}</td><td>{p.get('current_stock', 0):.1f} {p.get('eenheid','')}</td>"
+        f"<td>{p.get('minimumvoorraad', 0):.1f} {p.get('eenheid','')}</td></tr>"
+        for p in producten
+    )
+    html = f"""
+<html><body style="font-family:sans-serif;color:#111827;max-width:600px;margin:0 auto">
+<h2 style="color:#B45309">&#9888; Lage voorraad — {restaurant_naam}</h2>
+<p>Na het opslaan van de sluitstock staan de volgende producten <strong>onder hun minimumvoorraad</strong>:</p>
+<table border="0" cellspacing="0" cellpadding="6"
+       style="border-collapse:collapse;width:100%">
+  <thead>
+    <tr style="background:#B45309;color:white">
+      <th align="left">Artikel</th><th align="left">Huidige voorraad</th><th align="left">Minimum</th>
+    </tr>
+  </thead>
+  <tbody>{rijen}</tbody>
+</table>
+<p style="margin-top:20px;color:#6B7280;font-size:0.85rem">
+  Controleer het besteladvies in de Besteltool.
+</p>
+</body></html>"""
+
+    try:
+        resp = resend.Emails.send({
+            "from":    afzender,
+            "to":      [to_email],
+            "subject": f"Lage voorraad alert – {restaurant_naam}",
+            "html":    html,
+        })
+        return True, getattr(resp, "id", "") or str(resp)
+    except Exception as e:
+        logger.error("lage_voorraad_alert_fout: %s", e)
+        return False, str(e)
+
+
 # ── Helpers ────────────────────────────────────────────────────────────────
 
 def _lees_resend_key() -> str | None:
