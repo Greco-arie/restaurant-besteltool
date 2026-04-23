@@ -1,0 +1,28 @@
+name: Wekelijkse audit e-mail
+
+on:
+  schedule:
+    - cron: "0 8 * * 1"   # maandag 08:00 UTC
+  workflow_dispatch:         # handmatig triggeren voor testen
+
+jobs:
+  stuur-audit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Python instellen
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.13"
+
+      - name: Dependencies installeren
+        run: pip install supabase resend
+
+      - name: Audit e-mail versturen
+        env:
+          SUPABASE_URL:              ${{ secrets.SUPABASE_URL }}
+          SUPABASE_SERVICE_KEY:      ${{ secrets.SUPABASE_SERVICE_KEY }}
+          RESEND_API_KEY:            ${{ secrets.RESEND_API_KEY }}
+          RESEND_DOMEIN_GEVERIFIEERD: ${{ secrets.RESEND_DOMEIN_GEVERIFIEERD }}
+        run: python scripts/stuur_audit_email.py

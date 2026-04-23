@@ -119,6 +119,9 @@ def maak_gebruiker_aan(
         if email:
             row["email"] = email.lower().strip()
         get_client().table("tenant_users").insert(row).execute()
+        from audit import log_audit_event
+        log_audit_event(tenant_id, username, "gebruiker_aangemaakt",
+                        {"username": username, "role": role})
         return True
     except Exception:
         return False
@@ -576,6 +579,9 @@ def maak_tenant_met_admin(
     tenant_id = maak_tenant_aan(naam, slug)
     if not tenant_id:
         return None
+    from audit import log_audit_event
+    log_audit_event(tenant_id, admin_username, "tenant_aangemaakt",
+                    {"naam": naam, "slug": slug})
     ok = maak_gebruiker_aan(
         tenant_id, admin_username, admin_password,
         "admin", admin_username, email=admin_email,
@@ -585,3 +591,6 @@ def maak_tenant_met_admin(
         # de UI dit kan melden en de admin handmatig een gebruiker kan aanmaken.
         return tenant_id
     return tenant_id
+
+
+# Audit logging: zie audit.py — importeer daar rechtstreeks vandaan.

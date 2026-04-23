@@ -310,6 +310,8 @@ def page_login() -> None:
                 st.session_state.user_rol             = user["role"]
                 st.session_state.user_permissions     = user.get("permissions", {})
                 st.session_state["_login_timestamp"]  = time.time()
+                from audit import log_audit_event
+                log_audit_event(user["tenant_id"], user["username"], "login", {})
                 st.rerun()
             else:
                 st.error("Restaurant, gebruikersnaam of wachtwoord klopt niet.")

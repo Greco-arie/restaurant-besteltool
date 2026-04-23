@@ -5,6 +5,7 @@ import recommendation as rc
 import email_service as mail
 import monitoring
 import db
+from audit import log_audit_event
 from cache import get_leveranciers_dict
 
 PAGE_REVIEW   = "Bestelreview"
@@ -99,6 +100,14 @@ def render() -> None:
                                 bestel_datum  = datum,
                                 resend_id     = resultaat,
                                 supplier_id   = cfg_lev.get("id"),
+                            )
+                            log_audit_event(
+                                tenant_id,
+                                st.session_state.get("user_naam", "onbekend"),
+                                "bestelling_verzonden",
+                                {"leverancier": lev,
+                                 "datum":       datum,
+                                 "aantal":      int(len(df_lev))},
                             )
                         else:
                             st.error(f"Verzenden mislukt: {resultaat}")

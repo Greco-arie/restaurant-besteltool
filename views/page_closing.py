@@ -11,6 +11,7 @@ import weather as wt
 import inventory as inv
 import db
 import email_service as mail
+from audit import log_audit_event
 from cache import (
     get_products, get_sales_history, get_events, get_stock_count,
     get_reservations, get_leveranciers_dict, toon_voltooid_overlay,
@@ -280,6 +281,10 @@ def render() -> None:
         inv.log_theoretisch_verbruik(tenant_id, datum_vandaag, covers_int, df_producten)
         learning.log_forecast(tenant_id, datum_morgen, result.forecast_covers,
                                result.event_naam, bijzonderheden)
+        log_audit_event(tenant_id, user_naam, "sluiting_opgeslagen",
+                        {"datum":  datum_vandaag.isoformat(),
+                         "covers": covers_int,
+                         "omzet":  omzet_float})
 
         # Lage-voorraad alert naar manager (A5.3)
         _stuur_lage_voorraad_alert_indien_nodig(tenant_id, df_stock_nu, df_producten)
