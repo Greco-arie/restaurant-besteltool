@@ -12,6 +12,13 @@ data/forecast_log.csv
 # Lokale Streamlit secrets (wachtwoorden voor lokaal gebruik)
 .streamlit/secrets.toml
 
+# Test secrets (Supabase JWT secret + service keys voor RLS-tests — NOOIT committen)
+.env
+.env.local
+.env.test
+.env.test.local
+secrets.toml
+
 # Editor / OS
 .vscode/
 .idea/

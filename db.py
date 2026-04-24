@@ -17,10 +17,45 @@ def _hash_token(token: str) -> str:
 
 @st.cache_resource
 def get_client() -> Client:
-    """Gecachte Supabase client met service_role key — bypassed RLS server-side."""
+    """
+    Gecachte Supabase client met service_role key — bypassed RLS server-side.
+
+    DEPRECATED voor nieuwe code: gebruik expliciet één van:
+      - get_admin_client()         → cross-tenant super_admin operaties
+      - get_tenant_client(tenant_id) → tenant-scoped reads/writes (RLS afgedwongen)
+
+    Bestaande callers blijven werken (zelfde gedrag, zelfde cache); migratie
+    gebeurt gefaseerd. Zie docs/rls-policies.md.
+    """
     url = st.secrets["supabase"]["url"]
     key = st.secrets["supabase"]["service_key"]
     return create_client(url, key)
+
+
+def get_admin_client() -> Client:
+    """
+    Supabase client met service_role key — BYPASSED RLS.
+
+    GEBRUIK voor:
+      - Super_admin UI: tenants beheren, gebruikers aanmaken/verwijderen
+      - Password reset (tokens over tenants heen)
+      - Audit log INSERT (audit.log_audit_event schrijft altijd via service_role)
+      - Cross-tenant rapportages (alleen voor super_admin-rol)
+      - Migratiescripts / eenmalige data-opschoning
+
+    GEBRUIK NIET voor:
+      - Tenant-scoped reads/writes op: suppliers, products, sent_emails,
+        sales_history, stock_count, forecast_log, current_inventory,
+        inventory_adjustments, daily_usage, audit_log (SELECT)
+      - Elke code die loopt onder een ingelogde manager/medewerker
+      → In al deze gevallen: gebruik get_tenant_client(tenant_id).
+
+    Rationale: service_role bypassed RLS volledig. Wie dit aanroept voor
+    tenant-data negeert de v12-policies en riskeert cross-tenant data-leak.
+
+    Zie docs/rls-policies.md voor het volledige beslisschema.
+    """
+    return get_client()
 
 
 def get_tenant_client(tenant_id: str) -> Client:
