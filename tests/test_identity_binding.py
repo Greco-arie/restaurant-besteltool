@@ -152,7 +152,7 @@ def test_get_tenant_client_accepteert_geldige_binding():
 
 @pytest.mark.unit
 def test_get_tenant_client_weigert_gemanipuleerde_tenant_id(monkeypatch):
-    """Aanvaller zet andere tenant_id in session_state → RuntimeError + audit-log."""
+    """Aanvaller zet andere tenant_id in session_state → st.stop + audit-log."""
     import db
 
     echte_tenant   = "tenant-A"
@@ -171,9 +171,16 @@ def test_get_tenant_client_weigert_gemanipuleerde_tenant_id(monkeypatch):
         audit_calls.append((tid, uname, actie, details))
     monkeypatch.setattr("audit.log_audit_event", _fake_audit)
 
-    with pytest.raises(RuntimeError):
+    error_mock = MagicMock()
+    stop_mock  = MagicMock(side_effect=SystemExit)
+    monkeypatch.setattr("db.st.error", error_mock)
+    monkeypatch.setattr("db.st.stop",  stop_mock)
+
+    with pytest.raises(SystemExit):
         db.get_tenant_client(aanval_tenant)
 
+    assert error_mock.called, "st.error moet zijn aangeroepen bij mismatch"
+    assert stop_mock.called,  "st.stop moet zijn aangeroepen bij mismatch (fail-closed)"
     assert any(c[2] == "identity_binding_mismatch" for c in audit_calls), (
         f"Audit-log moet 'identity_binding_mismatch' bevatten, zag: {audit_calls}"
     )
@@ -183,7 +190,7 @@ def test_get_tenant_client_weigert_gemanipuleerde_tenant_id(monkeypatch):
 
 @pytest.mark.unit
 def test_get_tenant_client_weigert_ontbrekende_proof(monkeypatch):
-    """Zonder identity_proof in session_state → RuntimeError + audit-log."""
+    """Zonder identity_proof in session_state → st.stop + audit-log."""
     import db
 
     st.session_state["user_naam"] = "manager"
@@ -194,12 +201,101 @@ def test_get_tenant_client_weigert_ontbrekende_proof(monkeypatch):
         audit_calls.append((tid, uname, actie, details))
     monkeypatch.setattr("audit.log_audit_event", _fake_audit)
 
-    with pytest.raises(RuntimeError):
+    error_mock = MagicMock()
+    stop_mock  = MagicMock(side_effect=SystemExit)
+    monkeypatch.setattr("db.st.error", error_mock)
+    monkeypatch.setattr("db.st.stop",  stop_mock)
+
+    with pytest.raises(SystemExit):
         db.get_tenant_client("tenant-A")
 
+    assert error_mock.called, "st.error moet zijn aangeroepen bij ontbrekende proof"
+    assert stop_mock.called,  "st.stop moet zijn aangeroepen bij ontbrekende proof (fail-closed)"
     assert any(c[2] == "identity_binding_ontbreekt" for c in audit_calls), (
         f"Audit-log moet 'identity_binding_ontbreekt' bevatten, zag: {audit_calls}"
     )
+
+
+# ── 5b. Generieke melding bij mismatch (geen mechanismenaam-leak) ─────────
+
+@pytest.mark.unit
+def test_get_tenant_client_toont_generieke_melding_bij_mismatch(monkeypatch):
+    """
+    User-facing st.error() MOET een generieke 'Sessie verlopen'-boodschap tonen.
+
+    Mechanismenamen ('binding', 'HMAC', 'mismatch') mogen NIET in de UI lekken,
+    want die helpen een aanvaller bij reverse-engineering van de auth-flow.
+    """
+    import db
+
+    echte_tenant   = "tenant-A"
+    aanval_tenant  = "tenant-EVIL"
+    username       = "manager"
+    secret         = st.secrets["supabase"]["jwt_secret"]
+    st.session_state["user_naam"]      = username
+    st.session_state["identity_proof"] = _bereken_expected_proof(
+        echte_tenant, username, secret
+    )
+
+    monkeypatch.setattr("audit.log_audit_event", lambda *a, **kw: None)
+    error_mock = MagicMock()
+    stop_mock  = MagicMock(side_effect=SystemExit)
+    monkeypatch.setattr("db.st.error", error_mock)
+    monkeypatch.setattr("db.st.stop",  stop_mock)
+
+    with pytest.raises(SystemExit):
+        db.get_tenant_client(aanval_tenant)
+
+    assert error_mock.called, "st.error moet zijn aangeroepen"
+    boodschap = error_mock.call_args.args[0] if error_mock.call_args.args else ""
+    assert "Sessie verlopen" in boodschap, (
+        f"Boodschap moet 'Sessie verlopen' bevatten, zag: {boodschap!r}"
+    )
+    laag = boodschap.lower()
+    for verboden in ("binding", "hmac", "mismatch", "proof"):
+        assert verboden not in laag, (
+            f"Mechanismenaam {verboden!r} mag niet lekken naar UI; zag: {boodschap!r}"
+        )
+
+
+# ── 5c. Audit-log blijft schrijven bij mismatch ───────────────────────────
+
+@pytest.mark.unit
+def test_get_tenant_client_audit_blijft_schrijven_bij_mismatch(monkeypatch):
+    """
+    Forensics-eis: bij mismatch MOET audit_log_event nog steeds aangeroepen
+    worden met `identity_binding_mismatch`, óók nu de RuntimeError binnen
+    get_tenant_client wordt afgevangen door st.error+st.stop.
+    """
+    import db
+
+    echte_tenant   = "tenant-A"
+    aanval_tenant  = "tenant-EVIL"
+    username       = "manager"
+    secret         = st.secrets["supabase"]["jwt_secret"]
+    st.session_state["user_naam"]      = username
+    st.session_state["identity_proof"] = _bereken_expected_proof(
+        echte_tenant, username, secret
+    )
+
+    audit_calls: list[tuple] = []
+    def _fake_audit(tid, uname, actie, details=None):
+        audit_calls.append((tid, uname, actie, details))
+    monkeypatch.setattr("audit.log_audit_event", _fake_audit)
+    monkeypatch.setattr("db.st.error", MagicMock())
+    monkeypatch.setattr("db.st.stop",  MagicMock(side_effect=SystemExit))
+
+    with pytest.raises(SystemExit):
+        db.get_tenant_client(aanval_tenant)
+
+    mismatch_calls = [c for c in audit_calls if c[2] == "identity_binding_mismatch"]
+    assert mismatch_calls, (
+        f"audit_log moet 'identity_binding_mismatch' krijgen ondanks de "
+        f"st.error/st.stop-afhandeling; zag: {audit_calls}"
+    )
+    # Audit moet de gevraagde (aanval-)tenant_id loggen voor forensics.
+    assert mismatch_calls[0][0] == aanval_tenant
+    assert mismatch_calls[0][1] == username
 
 
 # ── 6. HMAC-vergelijking gebruikt compare_digest ──────────────────────────

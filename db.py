@@ -68,15 +68,15 @@ def get_admin_client() -> Client:
 
 
 def get_tenant_client(tenant_id: str) -> Client:
-    """
-    Supabase client met gesigned JWT (role=authenticated, tenant_id, 1u).
-    Niet gecached: elke aanroep mint vers, na HMAC identity-binding check
-    (auth_binding.verifieer_binding_of_raise — STAP 1b-4).
-    """
+    """Tenant-scoped Supabase client — mint vers JWT na HMAC identity-binding check (STAP 1b-4)."""
     url        = st.secrets["supabase"]["url"]
     anon_key   = st.secrets["supabase"]["anon_key"]
     jwt_secret = st.secrets["supabase"]["jwt_secret"]
-    verifieer_binding_of_raise(str(tenant_id), jwt_secret)
+    try:
+        verifieer_binding_of_raise(str(tenant_id), jwt_secret)
+    except RuntimeError:
+        st.error("Sessie verlopen, log opnieuw in.")
+        st.stop()
     now     = datetime.now(timezone.utc)
     payload = {
         "iss":       "supabase",
