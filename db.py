@@ -93,7 +93,7 @@ def get_tenant_client(tenant_id: str) -> Client:
 
 
 def laad_alle_tenants() -> list[dict]:
-    """Geeft alle tenants terug als lijst van dicts."""
+    """RLS-EXEMPT (super_admin): geeft alle tenants terug als lijst van dicts."""
     try:
         resp = get_client().table("tenants").select("id, name, slug, status").order("name").execute()
         return resp.data or []
@@ -102,7 +102,7 @@ def laad_alle_tenants() -> list[dict]:
 
 
 def maak_tenant_aan(name: str, slug: str) -> str | None:
-    """Maak een nieuwe tenant aan. Geeft UUID terug of None bij fout."""
+    """RLS-EXEMPT (super_admin): maak nieuwe tenant aan. UUID terug of None bij fout."""
     try:
         resp = get_client().table("tenants").insert({"name": name, "slug": slug}).execute()
         return resp.data[0]["id"] if resp.data else None
@@ -190,7 +190,14 @@ def maak_gebruiker_aan(
     permissions: dict | None = None,
     email:       str | None = None,
 ) -> bool:
-    """Maak een nieuwe gebruiker aan met bcrypt-gehasht wachtwoord. True als gelukt."""
+    """
+    RLS-EXEMPT: maak nieuwe gebruiker met bcrypt-gehasht wachtwoord. True = gelukt.
+
+    super_admin/onboarding-path = legitiem via get_client(). De tenant-admin caller
+    in page_instellingen.py valt onder STAP 1b-4 (session_state hardening) — tot dan
+    is role-guard UI-only (LOW backlog). hash_password RPC = pure utility, geen
+    tabel-access.
+    """
     try:
         hash_resp = get_client().rpc("hash_password", {"p_password": password}).execute()
         hashed = hash_resp.data
@@ -294,7 +301,7 @@ def update_gebruiker(
 
 
 def verwijder_tenant(tenant_id: str) -> tuple[bool, str]:
-    """Verwijder een klant op basis van ID. Geeft (True, '') of (False, foutmelding)."""
+    """RLS-EXEMPT (super_admin): verwijder klant op ID. Geeft (True, '') of (False, foutmelding)."""
     try:
         get_client().table("tenants").delete().eq("id", tenant_id).execute()
         return True, ""
@@ -303,7 +310,7 @@ def verwijder_tenant(tenant_id: str) -> tuple[bool, str]:
 
 
 def update_tenant(tenant_id: str, name: str) -> tuple[bool, str]:
-    """Pas de naam van een klant aan. Geeft (True, '') of (False, foutmelding)."""
+    """RLS-EXEMPT (super_admin): pas klantnaam aan. Geeft (True, '') of (False, foutmelding)."""
     try:
         get_client().table("tenants").update({"name": name}).eq("id", tenant_id).execute()
         return True, ""
@@ -315,6 +322,8 @@ def verificeer_gebruiker(tenant_slug: str, username: str, password: str) -> dict
     """
     Verifieer inloggegevens via pgcrypto crypt() — bcrypt-gehasht, tenant-scoped.
     Geeft dict terug met tenant_id, tenant_naam, username, role, permissions — of None als mislukt.
+
+    RLS-EXEMPT (pre-auth login): JWT nog niet beschikbaar, verificeer_login RPC doet tenant-filter.
     """
     try:
         resp = get_client().rpc(
@@ -622,7 +631,7 @@ def laad_leveranciers_dict_typed(tenant_id: str) -> dict[str, SupplierData]:
 # ── Password reset ─────────────────────────────────────────────────────────
 
 def zoek_gebruiker_op_email(tenant_slug: str, email: str) -> dict | None:
-    """Zoek een gebruiker op e-mailadres binnen een tenant. Geeft dict of None."""
+    """RLS-EXEMPT (pre-auth reset-flow): zoek gebruiker op e-mail binnen tenant. Geeft dict of None."""
     try:
         tenant_resp = (
             get_client()
@@ -656,6 +665,8 @@ def maak_reset_token(tenant_id: str, user_id: str) -> str | None:
     Genereer een veilig reset-token, sla de hash op in de database.
     Retourneert de plain token (alleen in e-mail sturen) of None bij fout.
     Invalideer eventuele openstaande tokens voor dezelfde gebruiker.
+
+    RLS-EXEMPT (pre-auth reset-flow): token-mint vóór gebruiker is ingelogd.
     """
     try:
         now = datetime.now(timezone.utc)
@@ -681,6 +692,8 @@ def verifieer_reset_token(token: str) -> dict | None:
     """
     Verifieer of een reset-token geldig is (niet verlopen, niet gebruikt).
     Geeft {user_id, tenant_id} of None terug.
+
+    RLS-EXEMPT (pre-auth reset-flow): token-verify vóór auth; tenant_id komt uit hash-match.
     """
     try:
         token_hash = _hash_token(token)
@@ -702,7 +715,7 @@ def verifieer_reset_token(token: str) -> dict | None:
 
 
 def invalideer_token(token: str) -> bool:
-    """Markeer een reset-token als gebruikt. True als gelukt."""
+    """RLS-EXEMPT (pre-auth reset-flow): markeer reset-token als gebruikt. True = gelukt."""
     try:
         get_client().table("password_reset_tokens").update(
             {"used_at": datetime.now(timezone.utc).isoformat()}
@@ -760,6 +773,8 @@ def maak_tenant_met_admin(
     """
     Maak een tenant aan + een admin-gebruiker in één stap.
     Geeft tenant_id terug of None bij fout.
+
+    RLS-EXEMPT (onboarding bootstrap): nieuwe tenant heeft nog geen context/JWT.
     """
     tenant_id = maak_tenant_aan(naam, slug)
     if not tenant_id:
