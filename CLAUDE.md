@@ -58,7 +58,7 @@ streamlit run app.py
 <!-- gitnexus:start -->
 # GitNexus — Code Intelligence
 
-This project is indexed by GitNexus as **restaurant besteltool** (1651 symbols, 2549 relationships, 47 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
+This project is indexed by GitNexus as **restaurant-besteltool** (1644 symbols, 2456 relationships, 47 execution flows). Use the GitNexus MCP tools to understand code, assess impact, and navigate safely.
 
 > If any GitNexus tool warns the index is stale, run `npx gitnexus analyze` in terminal first.
 
@@ -81,10 +81,10 @@ This project is indexed by GitNexus as **restaurant besteltool** (1651 symbols, 
 
 | Resource | Use for |
 |----------|---------|
-| `gitnexus://repo/restaurant besteltool/context` | Codebase overview, check index freshness |
-| `gitnexus://repo/restaurant besteltool/clusters` | All functional areas |
-| `gitnexus://repo/restaurant besteltool/processes` | All execution flows |
-| `gitnexus://repo/restaurant besteltool/process/{name}` | Step-by-step execution trace |
+| `gitnexus://repo/restaurant-besteltool/context` | Codebase overview, check index freshness |
+| `gitnexus://repo/restaurant-besteltool/clusters` | All functional areas |
+| `gitnexus://repo/restaurant-besteltool/processes` | All execution flows |
+| `gitnexus://repo/restaurant-besteltool/process/{name}` | Step-by-step execution trace |
 
 ## CLI
 
