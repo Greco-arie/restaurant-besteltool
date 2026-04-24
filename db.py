@@ -358,32 +358,34 @@ def verwijder_leverancier(tenant_id: str, supplier_id: str) -> tuple[bool, str]:
 
 # ── Gebruikersrechten ──────────────────────────────────────────────────────
 
-def laad_gebruiker_rechten(user_id: str) -> dict:
-    """Geeft de granulaire rechten van een gebruiker terug als dict."""
+def update_gebruiker_rechten(
+    tenant_id: str,
+    user_id:   str,
+    rechten:   dict,
+) -> tuple[bool, str]:
+    """
+    Sla granulaire rechten op voor een gebruiker binnen de eigen tenant.
+    Geeft (True, '') of (False, foutmelding).
+
+    Tenant-scoped via JWT (RLS afgedwongen) + defense-in-depth `.eq("tenant_id", ...)`
+    zodat cross-tenant rechten-wijziging onmogelijk is, ook als RLS per ongeluk niet greep.
+    """
+    if not tenant_id:
+        return False, "Ongeldige tenant."
     try:
         resp = (
-            get_client()
+            get_tenant_client(tenant_id)
             .table("tenant_users")
-            .select("permissions")
+            .update({"permissions": rechten})
             .eq("id", user_id)
+            .eq("tenant_id", tenant_id)
             .execute()
         )
-        if resp.data:
-            return resp.data[0].get("permissions") or {}
-    except Exception:
-        pass
-    return {}
-
-
-def update_gebruiker_rechten(user_id: str, rechten: dict) -> bool:
-    """Sla granulaire rechten op voor een gebruiker. True als gelukt."""
-    try:
-        get_client().table("tenant_users").update(
-            {"permissions": rechten}
-        ).eq("id", user_id).execute()
-        return True
-    except Exception:
-        return False
+        if not resp.data:
+            return False, "Gebruiker niet gevonden of geen toegang."
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 # ── Verzendhistorie ────────────────────────────────────────────────────────

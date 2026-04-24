@@ -225,7 +225,11 @@ def _tab_gebruikers(tenant_id: str) -> None:
                                 nieuw_pw or None,
                             )
                             if ok and nieuwe_rechten is not None:
-                                db.update_gebruiker_rechten(g["id"], nieuwe_rechten)
+                                ok_r, fout_r = db.update_gebruiker_rechten(
+                                    tenant_id, g["id"], nieuwe_rechten,
+                                )
+                                if not ok_r:
+                                    st.warning(f"Rechten niet opgeslagen: {fout_r}")
                             if ok:
                                 st.success("Gegevens bijgewerkt.")
                                 st.rerun()
