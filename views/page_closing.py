@@ -91,14 +91,19 @@ def render() -> None:
 
     with col1:
         st.subheader("Vandaag")
-        datum_vandaag = st.date_input("Datum", value=datum_vandaag, format="DD/MM/YYYY")
+        datum_vandaag = st.date_input(
+            "Datum", value=datum_vandaag, format="DD/MM/YYYY",
+            key="closing_datum_vandaag",
+        )
         datum_morgen  = datum_vandaag + timedelta(days=1)
         covers = st.number_input(
             "Bonnen vandaag", min_value=0, step=1, value=None, placeholder="0",
             help="Totaal aantal orders/gasten vandaag",
+            key="closing_covers",
         )
         omzet = st.number_input(
             "Omzet vandaag (€)", min_value=0.0, step=50.0, value=None, placeholder="0,00",
+            key="closing_omzet",
         )
 
     with col2:
@@ -118,6 +123,7 @@ def render() -> None:
             "Reserveringen morgen (bonnen)", min_value=0, step=1,
             value=default_rc if default_rc > 0 else None, placeholder="0",
             help="Vaste vooruitbestellingen of groepen. Laat leeg als er niets is.",
+            key="closing_reserved_covers",
         )
 
         col_p1, col_p2 = st.columns(2)
@@ -125,11 +131,13 @@ def render() -> None:
             platters_25 = st.number_input(
                 "Partycatering 25 st", min_value=0, step=1,
                 value=default_p25 if default_p25 > 0 else None, placeholder="0",
+                key="closing_platters_25",
             )
         with col_p2:
             platters_50 = st.number_input(
                 "Partycatering 50 st", min_value=0, step=1,
                 value=default_p50 if default_p50 > 0 else None, placeholder="0",
+                key="closing_platters_50",
             )
 
         p25 = platters_25 or 0
@@ -141,7 +149,8 @@ def render() -> None:
             )
 
         bijzonderheden = st.text_area("Bijzonderheden", height=68, value="",
-                                      placeholder="bv. lunch dicht, terras open, grote groep geannuleerd")
+                                      placeholder="bv. lunch dicht, terras open, grote groep geannuleerd",
+                                      key="closing_bijzonderheden")
 
         ts_morgen = pd.Timestamp(datum_morgen)
         ev = df_events_all[df_events_all["datum"] == ts_morgen]

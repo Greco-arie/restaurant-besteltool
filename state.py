@@ -32,9 +32,19 @@ def set_user(user: UserSession) -> None:
     st.session_state["identity_proof"] = user.identity_proof
 
 
+_CLOSING_FORM_KEYS = (
+    "closing_datum_vandaag", "closing_covers", "closing_omzet",
+    "closing_reserved_covers", "closing_platters_25", "closing_platters_50",
+    "closing_bijzonderheden", "stock_editor",
+    "werkelijk_covers", "werkelijk_omzet",
+    "closing_data", "forecast_result", "advies_df", "approved_orders",
+)
+
+
 def clear_user() -> None:
     for key in ("user_session", "ingelogd", "tenant_id", "tenant_naam",
-                "user_naam", "user_rol", "user_permissions", "identity_proof"):
+                "user_naam", "user_rol", "user_permissions", "identity_proof",
+                *_CLOSING_FORM_KEYS):
         st.session_state.pop(key, None)
 
 
