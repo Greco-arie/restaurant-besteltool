@@ -113,6 +113,7 @@ def user_session() -> UserSession:
         role="manager",
         full_name="Jan de Manager",
         permissions={"voorraad_tellen": True, "closing_invoeren": True},
+        identity_proof="a" * 64,
     )
 
 

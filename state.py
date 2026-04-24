@@ -28,11 +28,13 @@ def set_user(user: UserSession) -> None:
     st.session_state["user_naam"]   = user.username
     st.session_state["user_rol"]    = user.role
     st.session_state["user_permissions"] = user.permissions
+    # HMAC identity-binding — door get_tenant_client geverifieerd (STAP 1b-4).
+    st.session_state["identity_proof"] = user.identity_proof
 
 
 def clear_user() -> None:
     for key in ("user_session", "ingelogd", "tenant_id", "tenant_naam",
-                "user_naam", "user_rol", "user_permissions"):
+                "user_naam", "user_rol", "user_permissions", "identity_proof"):
         st.session_state.pop(key, None)
 
 
@@ -50,12 +52,13 @@ def _legacy_user() -> Optional[dict]:
     if not st.session_state.get("ingelogd"):
         return None
     return {
-        "tenant_id":   st.session_state.get("tenant_id", ""),
-        "tenant_naam": st.session_state.get("tenant_naam", ""),
-        "username":    st.session_state.get("user_naam", ""),
-        "role":        st.session_state.get("user_rol", "user"),
-        "full_name":   st.session_state.get("user_naam", ""),
-        "permissions": st.session_state.get("user_permissions", {}),
+        "tenant_id":      st.session_state.get("tenant_id", ""),
+        "tenant_naam":    st.session_state.get("tenant_naam", ""),
+        "username":       st.session_state.get("user_naam", ""),
+        "role":           st.session_state.get("user_rol", "user"),
+        "full_name":      st.session_state.get("user_naam", ""),
+        "permissions":    st.session_state.get("user_permissions", {}),
+        "identity_proof": st.session_state.get("identity_proof", ""),
     }
 
 

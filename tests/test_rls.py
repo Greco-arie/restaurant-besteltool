@@ -19,6 +19,22 @@ from datetime import datetime, timezone
 
 import jwt as pyjwt
 import pytest
+import streamlit as st
+
+from auth_binding import bereken_identity_proof
+
+
+def _seed_identity_binding(tenant_id: str, username: str = "manager") -> None:
+    """Zet een geldige HMAC-binding in session_state voor get_tenant_client."""
+    st.session_state["user_naam"]      = username
+    st.session_state["identity_proof"] = bereken_identity_proof(
+        tenant_id, username, st.secrets["supabase"]["jwt_secret"]
+    )
+
+
+def _clear_identity_binding() -> None:
+    for k in ("user_naam", "identity_proof"):
+        st.session_state.pop(k, None)
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -32,10 +48,13 @@ def test_tenant_client_bevat_jwt_met_correcte_claims():
     Zonder deze claims werken v12-policies niet (tenant_jwt_id() returnt null).
     """
     from db import get_tenant_client
-    import streamlit as st
 
     tenant_id = str(uuid.uuid4())
-    client = get_tenant_client(tenant_id)
+    _seed_identity_binding(tenant_id)
+    try:
+        client = get_tenant_client(tenant_id)
+    finally:
+        _clear_identity_binding()
 
     auth_header = client.options.headers.get("Authorization", "")
     assert auth_header.startswith("Bearer "), "Authorization-header moet Bearer-token bevatten"
@@ -54,9 +73,13 @@ def test_tenant_client_bevat_jwt_met_correcte_claims():
 def test_tenant_client_jwt_heeft_exp_ongeveer_1u():
     """JWT moet 1u geldig zijn — niet te kort (sessie-afbreuk), niet te lang (security)."""
     from db import get_tenant_client
-    import streamlit as st
 
-    client = get_tenant_client(str(uuid.uuid4()))
+    tenant_id = str(uuid.uuid4())
+    _seed_identity_binding(tenant_id)
+    try:
+        client = get_tenant_client(tenant_id)
+    finally:
+        _clear_identity_binding()
     token = client.options.headers["Authorization"].removeprefix("Bearer ")
     payload = pyjwt.decode(token, st.secrets["supabase"]["jwt_secret"], algorithms=["HS256"])
 
@@ -78,9 +101,13 @@ def test_tenant_client_niet_gecached_genereert_verse_jwt():
     import time
 
     tenant_id = str(uuid.uuid4())
-    c1 = get_tenant_client(tenant_id)
-    time.sleep(1.1)  # iat is in hele seconden, zorg voor verschil
-    c2 = get_tenant_client(tenant_id)
+    _seed_identity_binding(tenant_id)
+    try:
+        c1 = get_tenant_client(tenant_id)
+        time.sleep(1.1)  # iat is in hele seconden, zorg voor verschil
+        c2 = get_tenant_client(tenant_id)
+    finally:
+        _clear_identity_binding()
 
     token1 = c1.options.headers["Authorization"].removeprefix("Bearer ")
     token2 = c2.options.headers["Authorization"].removeprefix("Bearer ")

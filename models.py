@@ -58,12 +58,16 @@ class UserSession(BaseModel):
     """Ingelogde gebruikerscontext vanuit Supabase RPC verificeer_login."""
     model_config = ConfigDict(frozen=True)
 
-    tenant_id:   str
-    tenant_naam: str
-    username:    str
-    role:        Literal["user", "manager", "admin", "super_admin"]
-    full_name:   str
-    permissions: dict[str, bool] = Field(default_factory=dict)
+    tenant_id:      str
+    tenant_naam:    str
+    username:       str
+    role:           Literal["user", "manager", "admin", "super_admin"]
+    full_name:      str
+    permissions:    dict[str, bool] = Field(default_factory=dict)
+    # HMAC over (tenant_id|username) met jwt_secret — gecontroleerd in
+    # db.get_tenant_client() om cross-tenant session-state manipulatie te
+    # blokkeren. Zie auth_binding.py en docs/rls-policies.md (STAP 1b-4).
+    identity_proof: str
 
 
 class ClosingData(BaseModel):

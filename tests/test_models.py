@@ -118,6 +118,7 @@ class TestUserSession:
                 tenant_id="x", tenant_naam="X", username="u",
                 role="eigenaar",
                 full_name="U",
+                identity_proof="a" * 64,
             )
 
     @staticmethod
@@ -125,6 +126,7 @@ class TestUserSession:
         u = UserSession(
             tenant_id="x", tenant_naam="X", username="u",
             role="user", full_name="U",
+            identity_proof="a" * 64,
         )
         assert u.permissions == {}
 
@@ -134,6 +136,7 @@ class TestUserSession:
             "tenant_id": "abc", "tenant_naam": "TestBedrijf",
             "username": "chef01", "role": "manager",
             "full_name": "Chef Test", "permissions": {"closing_invoeren": True},
+            "identity_proof": "a" * 64,
         }
         u = UserSession.model_validate(raw)
         assert u.username == "chef01"

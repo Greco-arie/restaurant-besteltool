@@ -9,6 +9,7 @@ import jwt as pyjwt
 import streamlit as st
 from supabase import create_client, Client
 from supabase.lib.client_options import SyncClientOptions
+from auth_binding import bereken_identity_proof, verifieer_binding_of_raise
 from models import SupplierData, UserSession
 
 log = logging.getLogger(__name__)
@@ -68,16 +69,16 @@ def get_admin_client() -> Client:
 
 def get_tenant_client(tenant_id: str) -> Client:
     """
-    Retourneert een Supabase client met een gesigned JWT voor de opgegeven tenant.
-    JWT bevat role=authenticated + tenant_id, geldig 1 uur.
-    RLS policies controleren tenant_id via auth.jwt() ->> 'tenant_id'.
-    Niet gecached: elke aanroep genereert een verse JWT om expiry te voorkomen.
+    Supabase client met gesigned JWT (role=authenticated, tenant_id, 1u).
+    Niet gecached: elke aanroep mint vers, na HMAC identity-binding check
+    (auth_binding.verifieer_binding_of_raise — STAP 1b-4).
     """
     url        = st.secrets["supabase"]["url"]
     anon_key   = st.secrets["supabase"]["anon_key"]
     jwt_secret = st.secrets["supabase"]["jwt_secret"]
-    now        = datetime.now(timezone.utc)
-    payload    = {
+    verifieer_binding_of_raise(str(tenant_id), jwt_secret)
+    now     = datetime.now(timezone.utc)
+    payload = {
         "iss":       "supabase",
         "role":      "authenticated",
         "iat":       int(now.timestamp()),
@@ -86,10 +87,8 @@ def get_tenant_client(tenant_id: str) -> Client:
         "tenant_id": str(tenant_id),
     }
     token = pyjwt.encode(payload, jwt_secret, algorithm="HS256")
-    return create_client(
-        url, anon_key,
-        options=SyncClientOptions(headers={"Authorization": f"Bearer {token}"}),
-    )
+    return create_client(url, anon_key, options=SyncClientOptions(
+        headers={"Authorization": f"Bearer {token}"}))
 
 
 def laad_alle_tenants() -> list[dict]:
@@ -336,13 +335,17 @@ def verificeer_gebruiker(tenant_slug: str, username: str, password: str) -> dict
         ).execute()
         if resp.data:
             user = resp.data[0]
+            jwt_secret = st.secrets["supabase"]["jwt_secret"]
             return {
-                "tenant_id":   user["tenant_id"],
-                "tenant_naam": user["tenant_naam"],
-                "username":    user["username"],
-                "role":        user["role"],
-                "full_name":   user.get("full_name", user["username"]),
-                "permissions": user.get("permissions") or {},
+                "tenant_id":      user["tenant_id"],
+                "tenant_naam":    user["tenant_naam"],
+                "username":       user["username"],
+                "role":           user["role"],
+                "full_name":      user.get("full_name", user["username"]),
+                "permissions":    user.get("permissions") or {},
+                "identity_proof": bereken_identity_proof(
+                    str(user["tenant_id"]), user["username"], jwt_secret
+                ),
             }
     except Exception:
         pass
