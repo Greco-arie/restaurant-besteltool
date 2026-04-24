@@ -163,8 +163,7 @@ def _tab_gebruikers(tenant_id: str) -> None:
     st.subheader("Medewerkers")
     st.caption("Beheer rollen en rechten per medewerker. Wat iemand mag hangt af van zijn rol én de checkboxen.")
 
-    alle_gebruikers   = db.laad_alle_gebruikers()
-    tenant_gebruikers = [g for g in alle_gebruikers if g["tenant_id"] == tenant_id]
+    tenant_gebruikers = db.laad_tenant_gebruikers(tenant_id)
     zichtbaar         = [g for g in tenant_gebruikers
                          if perm.kan_gebruiker_zien(mijn_rol, g["role"])]
 
@@ -220,7 +219,7 @@ def _tab_gebruikers(tenant_id: str) -> None:
                             st.error("Je mag deze rolwijziging niet uitvoeren.")
                         else:
                             ok, fout = db.update_gebruiker(
-                                g["id"], nieuwe_uname.strip(),
+                                tenant_id, g["id"], nieuwe_uname.strip(),
                                 nieuwe_fnaam.strip(), nieuwe_rol,
                                 nieuw_pw or None,
                             )
@@ -243,11 +242,13 @@ def _tab_gebruikers(tenant_id: str) -> None:
                         col_ja, col_nee = st.columns(2)
                         with col_ja:
                             if st.button("Ja, verwijder", key=f"ja_g_{g['id']}", type="primary"):
-                                ok, _ = db.verwijder_gebruiker(g["id"])
+                                ok, fout = db.verwijder_gebruiker(tenant_id, g["id"])
                                 if ok:
                                     st.session_state.pop(confirm_key, None)
                                     st.success(f"{g['username']} verwijderd.")
                                     st.rerun()
+                                else:
+                                    st.error(f"Verwijderen mislukt: {fout}")
                         with col_nee:
                             if st.button("Annuleren", key=f"nee_g_{g['id']}"):
                                 st.session_state.pop(confirm_key, None)

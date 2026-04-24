@@ -1,6 +1,7 @@
 """Supabase database client + authenticatie helpers."""
 from __future__ import annotations
 import hashlib
+import logging
 import secrets
 from datetime import datetime, timezone, timedelta
 
@@ -9,6 +10,13 @@ import streamlit as st
 from supabase import create_client, Client
 from supabase.lib.client_options import SyncClientOptions
 from models import SupplierData, UserSession
+
+log = logging.getLogger(__name__)
+
+# Whitelist voor tenant-gebruiker-rollen. super_admin is bewust uitgesloten \u2014
+# alleen via `maak_gebruiker_aan` in de super_admin UI (page_admin) mag die
+# rol toegekend worden, niet via `update_gebruiker`.
+GELDIGE_TENANT_ROLLEN: frozenset[str] = frozenset({"user", "manager", "admin"})
 
 
 def _hash_token(token: str) -> str:
@@ -102,30 +110,74 @@ def maak_tenant_aan(name: str, slug: str) -> str | None:
         return None
 
 
+def _map_gebruiker_rij(u: dict, *, include_tenant_naam: bool = False) -> dict:
+    """
+    Map een `tenant_users` ruwe Supabase-rij naar het dict-formaat dat de UI verwacht.
+
+    Single source of truth voor de veld-structuur \u2014 voorkomt drift tussen
+    laad_alle_gebruikers (super_admin, include_tenant_naam=True) en
+    laad_tenant_gebruikers (tenant-admin, zonder tenants-join).
+    """
+    rij = {
+        "id":          u["id"],
+        "username":    u["username"],
+        "role":        u["role"],
+        "full_name":   u.get("full_name", ""),
+        "is_active":   u.get("is_active", True),
+        "tenant_id":   u["tenant_id"],
+        "email":       u.get("email") or "",
+        "permissions": u.get("permissions") or {},
+    }
+    if include_tenant_naam:
+        rij["tenant_naam"] = (u.get("tenants") or {}).get("name", "?")
+    return rij
+
+
 def laad_alle_gebruikers() -> list[dict]:
-    """Geeft alle gebruikers terug met tenantnaam."""
+    """
+    Geeft ALLE gebruikers (cross-tenant) terug met tenantnaam \u2014 SUPER_ADMIN UI.
+
+    RLS-EXEMPT: via get_client() (service_role). Uitsluitend voor page_admin.py
+    waar de super_admin alle klanten beheert. Tenant-admins/managers MOETEN
+    `laad_tenant_gebruikers(tenant_id)` gebruiken.
+    """
     try:
         resp = (
             get_client()
             .table("tenant_users")
-            .select("id, username, role, full_name, is_active, tenant_id, email, tenants(name)")
+            .select("id, username, role, full_name, is_active, tenant_id, email, permissions, tenants(name)")
             .order("username")
             .execute()
         )
-        rows = []
-        for u in (resp.data or []):
-            rows.append({
-                "id":           u["id"],
-                "username":     u["username"],
-                "role":         u["role"],
-                "full_name":    u.get("full_name", ""),
-                "is_active":    u.get("is_active", True),
-                "tenant_id":    u["tenant_id"],
-                "email":        u.get("email") or "",
-                "tenant_naam":  (u.get("tenants") or {}).get("name", "?"),
-            })
-        return rows
+        return [_map_gebruiker_rij(u, include_tenant_naam=True) for u in (resp.data or [])]
     except Exception:
+        log.exception("laad_alle_gebruikers mislukt")
+        return []
+
+
+def laad_tenant_gebruikers(tenant_id: str) -> list[dict]:
+    """
+    Geeft alle gebruikers voor \u00e9\u00e9n tenant terug \u2014 tenant-scoped via RLS.
+
+    Gebruik deze helper in page_instellingen.py (tenant-admin UI). Cross-tenant
+    leken zijn uitgesloten door get_tenant_client(tenant_id): de RLS-policy
+    filtert op auth.jwt() ->> 'tenant_id'.
+
+    Lege tenant_id \u2192 [] (geen exception, geen JWT-mint).
+    """
+    if not tenant_id:
+        return []
+    try:
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("tenant_users")
+            .select("id, username, role, full_name, is_active, tenant_id, email, permissions")
+            .order("username")
+            .execute()
+        )
+        return [_map_gebruiker_rij(u) for u in (resp.data or [])]
+    except Exception:
+        log.exception("laad_tenant_gebruikers mislukt (tenant=%s)", tenant_id)
         return []
 
 
@@ -162,16 +214,35 @@ def maak_gebruiker_aan(
         return False
 
 
-def verwijder_gebruiker(user_id: str) -> tuple[bool, str]:
-    """Verwijder een gebruiker op basis van ID. Geeft (True, '') of (False, foutmelding)."""
+def verwijder_gebruiker(tenant_id: str, user_id: str) -> tuple[bool, str]:
+    """
+    Verwijder een gebruiker binnen de eigen tenant. Geeft (True, '') of (False, foutmelding).
+
+    Tenant-scoped via JWT (RLS afgedwongen) + defense-in-depth `.eq("tenant_id", ...)`
+    zodat cross-tenant DELETE onmogelijk is, ook als RLS per ongeluk niet greep.
+    """
+    if not tenant_id:
+        return False, "Ongeldige tenant."
+    if not user_id:
+        return False, "Ongeldige gebruiker."
     try:
-        get_client().table("tenant_users").delete().eq("id", user_id).execute()
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("tenant_users")
+            .delete()
+            .eq("id", user_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        if not resp.data:
+            return False, "Gebruiker niet gevonden of geen toegang."
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
 def update_gebruiker(
+    tenant_id: str,
     user_id:   str,
     username:  str,
     full_name: str,
@@ -179,7 +250,23 @@ def update_gebruiker(
     password:  str | None = None,
     email:     str | None = None,
 ) -> tuple[bool, str]:
-    """Pas gebruikersgegevens aan. Geeft (True, '') of (False, foutmelding)."""
+    """
+    Pas gebruikersgegevens aan binnen de eigen tenant. Geeft (True, '') of (False, foutmelding).
+
+    Tenant-scoped via JWT (RLS afgedwongen) + defense-in-depth `.eq("tenant_id", ...)`.
+    `role` moet in GELDIGE_TENANT_ROLLEN zitten \u2014 backend-whitelist voorkomt
+    privilege-escalatie als de UI-laag gebypassed wordt (toekomstige REST-API,
+    directe backend-aanroep in tests, etc.).
+
+    hash_password RPC mag via get_client() omdat het een pure utility-RPC is
+    (geen tabel-access, geen RLS-relevantie).
+    """
+    if not tenant_id:
+        return False, "Ongeldige tenant."
+    if not user_id:
+        return False, "Ongeldige gebruiker."
+    if role not in GELDIGE_TENANT_ROLLEN:
+        return False, f"Ongeldige rol: {role!r}."
     try:
         data: dict = {
             "username":  username,
@@ -191,7 +278,16 @@ def update_gebruiker(
             data["password"] = hash_resp.data
         if email is not None:
             data["email"] = email.lower().strip() if email.strip() else None
-        get_client().table("tenant_users").update(data).eq("id", user_id).execute()
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("tenant_users")
+            .update(data)
+            .eq("id", user_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        if not resp.data:
+            return False, "Gebruiker niet gevonden of geen toegang."
         return True, ""
     except Exception as e:
         return False, str(e)
