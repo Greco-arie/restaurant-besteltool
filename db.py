@@ -295,6 +295,7 @@ def maak_leverancier_aan(
 
 
 def update_leverancier(
+    tenant_id:      str,
     supplier_id:    str,
     name:           str,
     email:          str,
@@ -303,26 +304,53 @@ def update_leverancier(
     levert_ma: bool, levert_di: bool, levert_wo: bool, levert_do: bool,
     levert_vr: bool, levert_za: bool, levert_zo: bool,
 ) -> tuple[bool, str]:
-    """Pas een leverancier aan. Geeft (True, '') of (False, foutmelding)."""
+    """
+    Pas een leverancier aan binnen de eigen tenant. Geeft (True, '') of (False, foutmelding).
+
+    Tenant-scoped via JWT (RLS afgedwongen) + defense-in-depth `.eq("tenant_id", ...)`
+    zodat cross-tenant mutatie onmogelijk is, ook als RLS per ongeluk niet greep.
+    """
+    if not tenant_id:
+        return False, "Ongeldige tenant."
     try:
-        get_client().table("suppliers").update({
-            "name":           name.strip(),
-            "email":          email.strip(),
-            "aanhef":         aanhef.strip(),
-            "lead_time_days": lead_time_days,
-            "levert_ma": levert_ma, "levert_di": levert_di, "levert_wo": levert_wo,
-            "levert_do": levert_do, "levert_vr": levert_vr, "levert_za": levert_za,
-            "levert_zo": levert_zo,
-        }).eq("id", supplier_id).execute()
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("suppliers")
+            .update({
+                "name":           name.strip(),
+                "email":          email.strip(),
+                "aanhef":         aanhef.strip(),
+                "lead_time_days": lead_time_days,
+                "levert_ma": levert_ma, "levert_di": levert_di, "levert_wo": levert_wo,
+                "levert_do": levert_do, "levert_vr": levert_vr, "levert_za": levert_za,
+                "levert_zo": levert_zo,
+            })
+            .eq("id", supplier_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        if not resp.data:
+            return False, "Leverancier niet gevonden of geen toegang."
         return True, ""
     except Exception as e:
         return False, str(e)
 
 
-def verwijder_leverancier(supplier_id: str) -> tuple[bool, str]:
-    """Verwijder een leverancier (soft delete: zet is_active op False)."""
+def verwijder_leverancier(tenant_id: str, supplier_id: str) -> tuple[bool, str]:
+    """Soft delete leverancier (is_active=False), tenant-scoped via JWT + filter."""
+    if not tenant_id:
+        return False, "Ongeldige tenant."
     try:
-        get_client().table("suppliers").update({"is_active": False}).eq("id", supplier_id).execute()
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("suppliers")
+            .update({"is_active": False})
+            .eq("id", supplier_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        if not resp.data:
+            return False, "Leverancier niet gevonden of geen toegang."
         return True, ""
     except Exception as e:
         return False, str(e)

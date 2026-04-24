@@ -87,7 +87,7 @@ def _tab_leveranciers(tenant_id: str) -> None:
 
                 if opslaan:
                     ok, fout = db.update_leverancier(
-                        lev["id"], naam_in, email_in, aanhef_in, lt_in,
+                        tenant_id, lev["id"], naam_in, email_in, aanhef_in, lt_in,
                         *levert_waarden
                     )
                     if ok:
@@ -98,7 +98,7 @@ def _tab_leveranciers(tenant_id: str) -> None:
                         st.error(f"Opslaan mislukt: {fout}")
 
                 if verwijder:
-                    ok, fout = db.verwijder_leverancier(lev["id"])
+                    ok, fout = db.verwijder_leverancier(tenant_id, lev["id"])
                     if ok:
                         st.success(f"**{lev['name']}** verwijderd.")
                         st.cache_data.clear()
