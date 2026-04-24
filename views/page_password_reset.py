@@ -93,7 +93,12 @@ def render_nieuw_wachtwoord(token: str) -> None:
                 st.error("Wachtwoord moet minimaal 8 tekens lang zijn.")
                 return
 
-            ok = db.reset_wachtwoord(gebruiker_info["user_id"], nieuw)
+            # Foutmelding bewust niet getoond (anti-enumeration \u2014 pre-auth flow).
+            ok, _fout = db.reset_wachtwoord(
+                gebruiker_info["tenant_id"],
+                gebruiker_info["user_id"],
+                nieuw,
+            )
             if ok:
                 db.invalideer_token(token)
                 st.session_state["_reset_success"] = True

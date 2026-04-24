@@ -712,16 +712,40 @@ def invalideer_token(token: str) -> bool:
         return False
 
 
-def reset_wachtwoord(user_id: str, nieuw_wachtwoord: str) -> bool:
-    """Sla een nieuw gehashed wachtwoord op voor een gebruiker. True als gelukt."""
+def reset_wachtwoord(tenant_id: str, user_id: str, nieuw_wachtwoord: str) -> tuple[bool, str]:
+    """
+    Sla een nieuw gehashed wachtwoord op voor een gebruiker binnen de eigen tenant.
+    Geeft (True, '') of (False, foutmelding).
+
+    Tenant-scoped via JWT (RLS afgedwongen) + defense-in-depth `.eq("tenant_id", ...)`
+    zodat cross-tenant wachtwoord-reset onmogelijk is, ook als RLS per ongeluk
+    niet greep. `tenant_id` komt altijd uit `verifieer_reset_token` \u2014 die
+    verifieert de token-hash v\u00f3\u00f3r hij de tenant_id teruggeeft, dus dit is een
+    legitieme pre-auth tenant-context.
+
+    hash_password RPC mag via get_client() (pure utility, geen tabel-access).
+    """
+    if not tenant_id:
+        return False, "Ongeldige tenant."
+    if not user_id:
+        return False, "Ongeldige gebruiker."
+    if not nieuw_wachtwoord:
+        return False, "Wachtwoord mag niet leeg zijn."
     try:
         hash_resp = get_client().rpc("hash_password", {"p_password": nieuw_wachtwoord}).execute()
-        get_client().table("tenant_users").update(
-            {"password": hash_resp.data}
-        ).eq("id", user_id).execute()
-        return True
-    except Exception:
-        return False
+        resp = (
+            get_tenant_client(tenant_id)
+            .table("tenant_users")
+            .update({"password": hash_resp.data})
+            .eq("id", user_id)
+            .eq("tenant_id", tenant_id)
+            .execute()
+        )
+        if not resp.data:
+            return False, "Gebruiker niet gevonden of geen toegang."
+        return True, ""
+    except Exception as e:
+        return False, str(e)
 
 
 # ── Tenant onboarding ──────────────────────────────────────────────────────
