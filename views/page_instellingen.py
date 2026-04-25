@@ -259,7 +259,7 @@ def _tab_gebruikers(tenant_id: str) -> None:
                             st.rerun()
 
     kan_aanmaken = (
-        mijn_rol in ("admin", "super_admin") or
+        mijn_rol == "admin" or
         mijn_perms.get("gebruikers_aanmaken", False)
     )
     if kan_aanmaken:

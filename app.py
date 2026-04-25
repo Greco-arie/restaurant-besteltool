@@ -52,7 +52,7 @@ _PAGINAS_BASIS      = [PAGE_CLOSING, PAGE_FORECAST, PAGE_REVIEW, PAGE_EXPORT,
 PAGINAS             = _PAGINAS_BASIS                                                 # user (read-only)
 PAGINAS_MANAGER     = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN]        # manager
 PAGINAS_ADMIN       = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN]        # admin (tenant-level)
-PAGINAS_SUPER_ADMIN = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_INSTELLINGEN, PAGE_ADMIN]  # super_admin
+PAGINAS_SUPER_ADMIN = [PAGE_DASHBOARD] + _PAGINAS_BASIS + [PAGE_ADMIN]  # super_admin (geen Instellingen — heeft geen eigen tenant)
 
 
 def _nav_paginas() -> list[str]:
