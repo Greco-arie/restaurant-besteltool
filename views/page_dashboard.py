@@ -67,6 +67,37 @@ def _laad_covers_vandaag(tenant_id: str) -> tuple[int | None, int | None]:
         return None, None
 
 
+def _filter_en_sorteer_leveringen(
+    emails: list[dict],
+    vandaag: date,
+    max_rijen: int = 5,
+) -> pd.DataFrame:
+    """Filter sent_emails op leverdatum >= vandaag, sorteer oplopend, top N.
+
+    Pure transformatie — geen Streamlit-/Supabase-calls. NULL-datums worden
+    eruit gefilterd. Output kolommen: Leverancier, Leverdatum, Status, Verzonden.
+    """
+    if not emails:
+        return pd.DataFrame()
+    df = pd.DataFrame(emails)
+    if "bestel_datum" not in df.columns:
+        return pd.DataFrame()
+    df["_lev"] = pd.to_datetime(df["bestel_datum"], errors="coerce")
+    df = df.dropna(subset=["_lev"])
+    df = df[df["_lev"].dt.date >= vandaag]
+    if df.empty:
+        return pd.DataFrame()
+    df = df.sort_values("_lev", ascending=True).head(max_rijen)
+    ts = pd.to_datetime(df["timestamp"], errors="coerce")
+    df["Verzonden"] = ts.dt.strftime("%d/%m %H:%M").fillna("")
+    df = df.rename(columns={
+        "supplier_naam": "Leverancier",
+        "bestel_datum":  "Leverdatum",
+        "status":        "Status",
+    })
+    return df[["Leverancier", "Leverdatum", "Status", "Verzonden"]].reset_index(drop=True)
+
+
 def _laad_lage_voorraad(tenant_id: str) -> pd.DataFrame:
     """Geeft producten terug die onder hun minimumvoorraad zitten."""
     try:
@@ -151,22 +182,14 @@ def render() -> None:
             )
 
     with col_rechts:
-        st.subheader("Laatste bestellingen")
-        emails = db.laad_verzonden_emails(tenant_id, limit=5)
-        if not emails:
-            st.info("Nog geen bestellingen verzonden.")
+        st.subheader("Volgende leveringen")
+        emails = db.laad_verzonden_emails(tenant_id, limit=20)
+        df_lev = _filter_en_sorteer_leveringen(emails, date.today(), max_rijen=5)
+        if df_lev.empty:
+            st.info("Geen geplande leveringen.")
         else:
-            df_mail = pd.DataFrame(emails)
-            df_mail = df_mail.rename(columns={
-                "supplier_naam": "Leverancier",
-                "bestel_datum":  "Leverdatum",
-                "status":        "Status",
-                "timestamp":     "Verzonden",
-            })
-            if "Verzonden" in df_mail.columns:
-                df_mail["Verzonden"] = pd.to_datetime(df_mail["Verzonden"]).dt.strftime("%d/%m %H:%M")
-            st.dataframe(
-                df_mail[["Leverancier", "Leverdatum", "Status", "Verzonden"]],
-                hide_index=True,
-                use_container_width=True,
+            styled = df_lev.style.set_properties(
+                subset=["Leverancier"],
+                **{"font-size": "1.17em", "font-weight": "600"},
             )
+            st.dataframe(styled, hide_index=True, use_container_width=True)
