@@ -133,6 +133,54 @@ def _genereer_html_body(
 """
 
 
+# ── Afzender-keuze (per-tenant) ────────────────────────────────────────────
+
+_SANDBOX_AFZENDER = "onboarding@resend.dev"
+
+
+def _kies_afzender(tenant_slug: str, label: str = "no-reply") -> str:
+    """Kies de Resend-afzender op basis van per-tenant verified domains.
+
+    Logica (in volgorde):
+    1. ``RESEND_VERIFIED_DOMAINS`` (CSV) bevat ``{slug}.besteltool.nl`` →
+       ``{label}@{slug}.besteltool.nl`` (whitespace-tolerant, case-insensitive).
+    2. Anders: legacy ``RESEND_DOMEIN_GEVERIFIEERD=true`` → blanket allow op
+       ``{label}@{slug}.besteltool.nl`` met deprecation-warning.
+    3. Anders: sandbox-fallback ``onboarding@resend.dev`` met warning.
+    """
+    slug = tenant_slug.strip().lower()
+    verwacht_domein = f"{slug}.besteltool.nl"
+
+    csv_raw = os.getenv("RESEND_VERIFIED_DOMAINS", "")
+    verified = {d.strip().lower() for d in csv_raw.split(",") if d.strip()}
+    if verwacht_domein in verified:
+        return f"{label}@{verwacht_domein}"
+
+    legacy = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
+    if legacy:
+        logger.warning(
+            "resend_legacy_flag_deprecated",
+            extra={
+                "reden": "RESEND_DOMEIN_GEVERIFIEERD is deprecated; "
+                "gebruik RESEND_VERIFIED_DOMAINS (CSV) per-tenant",
+                "tenant_slug": slug,
+            },
+        )
+        return f"{label}@{verwacht_domein}"
+
+    logger.warning(
+        "resend_sandbox_afzender",
+        extra={
+            "reden": (
+                f"{verwacht_domein} niet in RESEND_VERIFIED_DOMAINS en "
+                "geen legacy-flag actief — fallback naar sandbox"
+            ),
+            "tenant_slug": slug,
+        },
+    )
+    return _SANDBOX_AFZENDER
+
+
 # ── Resend verzending ──────────────────────────────────────────────────────
 
 def verzend_bestelling(
@@ -178,13 +226,7 @@ def verzend_bestelling(
 
     aanhef        = lev_config.get("aanhef", "Beste leverancier,")
     naam_afzender = restaurant_naam or tenant_slug
-    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
-    if _domein_geverifieerd:
-        afzender = f"no-reply@{tenant_slug}.besteltool.nl"
-    else:
-        afzender = "onboarding@resend.dev"
-        logger.warning("resend_sandbox_afzender",
-                       extra={"reden": "RESEND_DOMEIN_GEVERIFIEERD niet ingesteld"})
+    afzender     = _kies_afzender(tenant_slug)
     onderwerp    = f"Bestelling – {leverancier} – {bestel_datum}"
 
     # PDF als bijlage
@@ -258,12 +300,8 @@ def verzend_reset_mail(
         return False, "RESEND_API_KEY niet ingesteld"
     resend.api_key = api_key
 
-    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
-    afzender = (
-        f"no-reply@{restaurant_naam}.besteltool.nl"
-        if _domein_geverifieerd
-        else "onboarding@resend.dev"
-    )
+    # `restaurant_naam` is op caller-niveau de tenant_slug (zie page_password_reset.py).
+    afzender = _kies_afzender(restaurant_naam)
 
     if reset_url:
         link_blok = f"""
