@@ -120,3 +120,87 @@ def test_nieuwe_csv_wint_van_legacy_flag(
     afzender = _kies_afzender("family-maarssen")
 
     assert afzender == "no-reply@family-maarssen.besteltool.nl"
+
+
+# ── verzend_welkomstmail: afzender via _kies_afzender ──────────────────────
+
+class _FakeEmails:
+    """Vervangt resend.Emails — vangt de send() payload op zodat we 'from' kunnen asserten."""
+
+    laatste_payload: dict | None = None
+
+    @classmethod
+    def send(cls, payload: dict) -> object:
+        cls.laatste_payload = payload
+
+        class _Resp:
+            id = "fake-mail-id"
+        return _Resp()
+
+
+@pytest.fixture
+def fake_resend(monkeypatch: pytest.MonkeyPatch):
+    """Mock resend.Emails + RESEND_API_KEY zodat verzend_welkomstmail geen netwerk raakt."""
+    import sys
+    import types
+
+    fake_resend_mod = types.ModuleType("resend")
+    fake_resend_mod.Emails  = _FakeEmails
+    fake_resend_mod.api_key = ""
+    monkeypatch.setitem(sys.modules, "resend", fake_resend_mod)
+    monkeypatch.setenv("RESEND_API_KEY", "fake-key")
+
+    _FakeEmails.laatste_payload = None
+    yield _FakeEmails
+
+
+def test_welkomstmail_with_verified_domain_geeft_per_tenant_afzender(
+    monkeypatch: pytest.MonkeyPatch, fake_resend
+) -> None:
+    monkeypatch.setenv("RESEND_VERIFIED_DOMAINS", "family-maarssen.besteltool.nl")
+    from email_service import verzend_welkomstmail
+
+    ok, _ = verzend_welkomstmail(
+        to_email        = "manager@familymaarssen.nl",
+        gebruikersnaam  = "sander",
+        restaurant_naam = "Family Maarssen",
+        tenant_slug     = "family-maarssen",
+    )
+
+    assert ok is True
+    assert fake_resend.laatste_payload is not None
+    assert fake_resend.laatste_payload["from"] == "welkom@family-maarssen.besteltool.nl"
+
+
+def test_welkomstmail_zonder_verified_domain_valt_terug_op_sandbox(
+    fake_resend,
+) -> None:
+    from email_service import verzend_welkomstmail
+
+    ok, _ = verzend_welkomstmail(
+        to_email        = "manager@familymaarssen.nl",
+        gebruikersnaam  = "sander",
+        restaurant_naam = "Family Maarssen",
+        tenant_slug     = "family-maarssen",
+    )
+
+    assert ok is True
+    assert fake_resend.laatste_payload["from"] == SANDBOX
+
+
+def test_welkomstmail_legacy_flag_geeft_per_tenant_afzender(
+    monkeypatch: pytest.MonkeyPatch, fake_resend
+) -> None:
+    """Backwards-compat: oude RESEND_DOMEIN_GEVERIFIEERD blijft werken."""
+    monkeypatch.setenv("RESEND_DOMEIN_GEVERIFIEERD", "true")
+    from email_service import verzend_welkomstmail
+
+    ok, _ = verzend_welkomstmail(
+        to_email        = "manager@familymaarssen.nl",
+        gebruikersnaam  = "sander",
+        restaurant_naam = "Family Maarssen",
+        tenant_slug     = "family-maarssen",
+    )
+
+    assert ok is True
+    assert fake_resend.laatste_payload["from"] == "welkom@family-maarssen.besteltool.nl"

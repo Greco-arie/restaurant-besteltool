@@ -88,6 +88,7 @@ def _tab_nieuwe_klant() -> None:
                 else:
                     st.success(f"✅ Klant **{naam}** aangemaakt.")
                     st.warning(f"Welkomstmail kon niet worden verstuurd: {fout_mail}")
+                st.rerun()
             else:
                 st.error("Aanmaken mislukt — slug bestaat mogelijk al.")
 
@@ -184,6 +185,7 @@ def _tab_klanten() -> None:
                 if nieuw_id:
                     st.success(f"Klant aangemaakt. UUID: `{nieuw_id}`")
                     st.info("Maak nu een gebruiker aan via de tab 'Gebruikers'.")
+                    st.rerun()
                 else:
                     st.error("Aanmaken mislukt — slug bestaat mogelijk al.")
 

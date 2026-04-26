@@ -364,12 +364,7 @@ def verzend_welkomstmail(
         return False, "RESEND_API_KEY niet ingesteld"
     resend.api_key = api_key
 
-    _domein_geverifieerd = os.getenv("RESEND_DOMEIN_GEVERIFIEERD", "false").lower() == "true"
-    afzender = (
-        "no-reply@besteltool.nl"
-        if _domein_geverifieerd
-        else "onboarding@resend.dev"
-    )
+    afzender = _kies_afzender(tenant_slug, label="welkom")
 
     html = f"""
 <html><body style="font-family:sans-serif;color:#111827;max-width:560px;margin:0 auto">
