@@ -4,6 +4,7 @@ import streamlit as st
 import db
 import monitoring
 import email_service as mail
+from views._widgets import render_reset_knop
 
 
 def render() -> None:
@@ -255,6 +256,8 @@ def _tab_gebruikers() -> None:
                     if st.button("Verwijder gebruiker", key=f"del_user_{g['id']}"):
                         st.session_state[confirm_key] = True
                         st.rerun()
+
+            render_reset_knop(g, key_prefix="adm")
 
     st.divider()
     st.subheader("Nieuwe gebruiker toevoegen")

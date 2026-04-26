@@ -4,6 +4,7 @@ import streamlit as st
 import db
 import permissions as perm
 from cache import get_leveranciers_lijst
+from views._widgets import render_reset_knop
 
 
 def render() -> None:
@@ -257,6 +258,9 @@ def _tab_gebruikers(tenant_id: str) -> None:
                         if st.button("Verwijder medewerker", key=f"del_g_{g['id']}"):
                             st.session_state[confirm_key] = True
                             st.rerun()
+
+                if perm.heeft_recht("gebruikers_beheren", mijn_rol, mijn_perms):
+                    render_reset_knop(g, key_prefix="inst")
 
     kan_aanmaken = (
         mijn_rol == "admin" or
