@@ -530,4 +530,5 @@ def main() -> None:
         page_leerrapport()
 
 
-main()
+if __name__ == "__main__":
+    main()
